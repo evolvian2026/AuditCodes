@@ -42,11 +42,12 @@ h1.doc { string-set: doctitle content(); font-size: 22pt; margin: 0 0 4pt; }
 h1.q { font-size: 15pt; margin: 0 0 3pt; border-bottom: 2px solid #1d4ed8; padding-bottom: 3pt; page-break-before: always; }
 .meta { color: #444; font-size: 8.5pt; margin: 0 0 8pt; }
 .meta span { margin-right: 10pt; }
-h2 { font-size: 11pt; margin: 11pt 0 4pt; color: #1d4ed8; }
-h3 { font-size: 9.5pt; margin: 8pt 0 3pt; }
+h2 { font-size: 11pt; margin: 11pt 0 4pt; color: #1d4ed8; page-break-after: avoid; }
+h3 { font-size: 9.5pt; margin: 8pt 0 3pt; page-break-after: avoid; }
 p { margin: 0 0 5pt; }
 ul, ol { margin: 0 0 5pt 16pt; padding: 0; }
-pre { font-family: "DejaVu Sans Mono", Consolas, monospace; font-size: 7.8pt; line-height: 1.3; background: #f3f4f6; border: 1px solid #d1d5db; padding: 5pt 6pt; margin: 0 0 6pt; white-space: pre-wrap; word-wrap: break-word; }
+pre { font-family: "DejaVu Sans Mono", Consolas, monospace; font-size: 7.8pt; line-height: 1.3; background: #f3f4f6; border: 1px solid #d1d5db; padding: 5pt 6pt; margin: 0 0 6pt; white-space: pre-wrap; word-wrap: break-word; page-break-inside: avoid; orphans: 4; widows: 4; }
+table.io { page-break-inside: avoid; }
 code { font-family: "DejaVu Sans Mono", Consolas, monospace; font-size: 8.5pt; }
 table { border-collapse: collapse; width: 100%; margin: 0 0 8pt; font-size: 8.5pt; }
 th, td { border: 1px solid #d1d5db; padding: 3pt 5pt; text-align: left; vertical-align: top; }
