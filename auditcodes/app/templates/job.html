@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block title %}{{ job.filename }} · AuditCodes{% endblock %}
-{% block nav %}<a href="/jobs/{{ job.id }}/export.json">Export JSON</a> · <a href="/jobs/{{ job.id }}/source.pdf">Source PDF</a>{% endblock %}
+{% block nav %}<a href="#export">Export</a> · <a href="/jobs/{{ job.id }}/source.pdf">Source PDF</a>{% endblock %}
 {% block content %}
 <h1>{{ job.filename }} <span class="muted">{{ job.question_count }} question{{ '' if job.question_count == 1 else 's' }}</span></h1>
 {% if job.document_warnings %}
@@ -28,4 +28,16 @@
   </tbody>
 </table>
 <p class="muted">Extraction confidence is the lowest per-field confidence for the question; anything below 95% deserves a look.</p>
+
+<h2 id="export">Export</h2>
+<form class="export" method="get" action="/jobs/{{ job.id }}/export.pdf" onsubmit="this.action = '/jobs/{{ job.id }}/export.' + this.fmt.value">
+  <label><input type="checkbox" name="hidden" value="1" checked onchange="this.value = this.checked ? '1' : '0'; this.checked = true"> hidden tests</label>
+  <label><input type="checkbox" name="drivers" value="1" checked onchange="this.value = this.checked ? '1' : '0'; this.checked = true"> driver code</label>
+  <label><input type="checkbox" name="solutions" value="1" checked onchange="this.value = this.checked ? '1' : '0'; this.checked = true"> solutions</label>
+  <label><input type="checkbox" name="audit" value="1" checked onchange="this.value = this.checked ? '1' : '0'; this.checked = true"> audit appendix</label>
+  <select name="fmt"><option value="pdf">PDF</option><option value="docx">Word (DOCX)</option><option value="html">HTML</option><option value="zip">ZIP bundle (JSON + PDF + DOCX + assets)</option><option value="json">JSON only</option></select>
+  <button type="submit">Download</button>
+  <span class="muted">PDF engine: {{ pdf_backend }}</span>
+</form>
+<p class="muted">Exports reflect every accepted change. Accepted patches are listed in the audit appendix; open findings are listed as open.</p>
 {% endblock %}

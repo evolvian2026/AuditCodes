@@ -17,6 +17,7 @@ from ..audit.patches import PatchError, apply_all, apply_patch, shift_indices_af
 from ..audit.report import AuditReport, FindingStatus
 from ..audit.rules import get_rule
 from ..exec.harness import SuiteResult, run_stdio_suite
+from ..export import ExportOptions, export_docx, export_html, export_pdf, export_zip, pdf_backend
 from ..exec.languages import LANGUAGES
 from ..exec.runner import Limits, LocalRunner
 from ..ingest.normalize import normalize_code
@@ -24,7 +25,7 @@ from ..llm.client import default_llm
 from ..models import IOMode, Language, Question
 from ..edits import EditError, apply_edit
 from ..fields import SECTIONS, field_ctx
-from .render import confidence_class, diff_html, markdown
+from ..render import confidence_class, diff_html, markdown
 from .store import JobNotFound, JobStore
 from .tasks import TaskRegistry
 
@@ -45,6 +46,7 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
     templates.env.globals["rule"] = get_rule
     llm = default_llm()
     templates.env.globals["llm_model"] = llm.model if llm else None
+    templates.env.globals["pdf_backend"] = pdf_backend()
 
     app = FastAPI(title="AuditCodes")
     app.mount("/static", StaticFiles(directory=str(_HERE / "static")), name="static")
@@ -105,10 +107,40 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
         store.delete(job_id)
         return RedirectResponse("/", status_code=303)
 
-    @app.get("/jobs/{job_id}/export.json")
-    def export_json(job_id: str):
-        get_job(job_id)
-        return FileResponse(store.questions_file(job_id), media_type="application/json", filename=f"{job_id}-questions.json")
+    def _export_options(job_id: str, hidden: str, drivers: str, solutions: str, audit: str, q: str | None) -> ExportOptions:
+        meta = get_job(job_id)
+        return ExportOptions(
+            title=meta.title or Path(meta.filename).stem.replace("_", " ").title(),
+            source_name=meta.filename,
+            include_hidden=hidden != "0",
+            include_drivers=drivers != "0",
+            include_solutions=solutions != "0",
+            include_audit=audit != "0",
+            question_ids=[q] if q else None,
+        )
+
+    @app.get("/jobs/{job_id}/export.{fmt}")
+    def export_document(job_id: str, fmt: str, hidden: str = "1", drivers: str = "1", solutions: str = "1", audit: str = "1", q: str | None = None):
+        if fmt == "json":
+            return FileResponse(store.questions_file(job_id), media_type="application/json", filename=f"{job_id}-questions.json")
+        if fmt not in ("pdf", "docx", "html", "zip"):
+            raise HTTPException(404)
+        options = _export_options(job_id, hidden, drivers, solutions, audit, q)
+        questions = store.load_questions(job_id)
+        reports = store.load_reports(job_id)
+        assets = store.assets_dir(job_id)
+        stem = f"{job_id}-audited" + (f"-{q}" if q else "")
+        if fmt == "html":
+            return HTMLResponse(export_html(questions, reports, options, assets))
+        if fmt == "pdf":
+            data, media = export_pdf(questions, reports, options, assets), "application/pdf"
+        elif fmt == "docx":
+            data, media = export_docx(questions, reports, options, assets), "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        else:
+            data, media = export_zip(questions, reports, options, assets, store.source_pdf(job_id)), "application/zip"
+        from fastapi.responses import Response
+
+        return Response(content=data, media_type=media, headers={"Content-Disposition": f'attachment; filename="{stem}.{fmt}"'})
 
     @app.get("/jobs/{job_id}/source.pdf")
     def source_pdf(job_id: str):

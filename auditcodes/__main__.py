@@ -93,6 +93,43 @@ def check_llm() -> int:
     return 0
 
 
+def export_cmd(source: str, fmt: str, out: str, no_hidden: bool, no_audit: bool, title: str | None) -> int:
+    from pydantic import TypeAdapter
+
+    from .audit.report import AuditReport
+    from .export import ExportOptions, export_docx, export_html, export_pdf, export_zip
+    from .models import Question
+
+    src = Path(source)
+    reports: dict[str, AuditReport] = {}
+    assets = None
+    if src.is_dir():  # a job directory
+        questions = TypeAdapter(list[Question]).validate_json((src / "questions.json").read_bytes())
+        for f in (src / "audit").glob("*.json") if (src / "audit").is_dir() else []:
+            r = AuditReport.model_validate_json(f.read_bytes())
+            reports[r.question_id] = r
+        assets = src / "assets"
+    elif src.suffix.lower() == ".json":
+        questions = TypeAdapter(list[Question]).validate_json(src.read_bytes())
+    else:
+        from .ingest import extract
+
+        assets = Path(out).parent / "assets"
+        questions = extract(src, assets).questions
+    options = ExportOptions(title=title or "Audited Coding Questions", source_name=src.name, include_hidden=not no_hidden, include_audit=not no_audit)
+    if fmt == "pdf":
+        data = export_pdf(questions, reports, options, assets)
+    elif fmt == "docx":
+        data = export_docx(questions, reports, options, assets)
+    elif fmt == "html":
+        data = export_html(questions, reports, options, assets).encode()
+    else:
+        data = export_zip(questions, reports, options, assets)
+    Path(out).write_bytes(data)
+    print(f"{len(questions)} question(s) -> {out}", file=sys.stderr)
+    return 0
+
+
 def serve(host: str, port: int, data_dir: str | None) -> int:
     import uvicorn
 
@@ -115,6 +152,13 @@ def main(argv: list[str] | None = None) -> int:
     au.add_argument("-o", "--out")
     au.add_argument("--no-llm", action="store_true", help="execution-based checks only")
     sub.add_parser("check-llm", help="confirm the Claude API is reachable with the configured credentials")
+    ex2 = sub.add_parser("export", help="export a job directory, questions.json or PDF as pdf/docx/html/zip")
+    ex2.add_argument("source")
+    ex2.add_argument("-f", "--format", choices=["pdf", "docx", "html", "zip"], default="pdf")
+    ex2.add_argument("-o", "--out", required=True)
+    ex2.add_argument("--no-hidden", action="store_true")
+    ex2.add_argument("--no-audit", action="store_true")
+    ex2.add_argument("--title")
     sv = sub.add_parser("serve", help="run the review web app")
     sv.add_argument("--host", default="127.0.0.1")
     sv.add_argument("--port", type=int, default=8000)
@@ -128,6 +172,8 @@ def main(argv: list[str] | None = None) -> int:
         return audit_cmd(args.source, args.out, args.no_llm)
     if args.command == "check-llm":
         return check_llm()
+    if args.command == "export":
+        return export_cmd(args.source, args.format, args.out, args.no_hidden, args.no_audit, args.title)
     if args.command == "serve":
         return serve(args.host, args.port, args.data_dir)
     return 2

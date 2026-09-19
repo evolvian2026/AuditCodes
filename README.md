@@ -16,7 +16,7 @@ Supported solution languages: C, C++, Java, Python, JavaScript.
 | 3 | Rule catalog, execution-based audit, model-driven review, findings with patches, accept/reject UI | **done** |
 | 4 | Oracle establishment, hidden-test generation (10-50 by difficulty), repair projection | **done** |
 | 5 | Solutions and driver scaffolds in all five languages, each verified | **done** |
-| 6 | PDF / DOCX / JSON / ZIP export | |
+| 6 | PDF / DOCX / HTML / JSON / ZIP export with audit appendix | **done** |
 
 ## Setup
 
@@ -108,6 +108,20 @@ patches" action.
 
 Without an API key the execution-based checks still run in full; the model stages are skipped
 and the report says so.
+
+### Export
+
+From the job page (or `python -m auditcodes export <job dir|questions.json|pdf> -f pdf|docx|html|zip -o out`):
+a formatted question bank — cover summary, then every question with statement, input/output
+explanation, constraints, samples, explanation, driver code and solutions per language, hidden
+tests with level and points (generated ones marked) — as **PDF**, **DOCX**, **HTML**, or a **ZIP**
+bundle that also carries `questions.json`, the audit reports and the figures. The audit appendix
+lists every finding with severity, source (execution vs model), the reviewer's decision, and what
+was applied. Toggle hidden tests, driver code, solutions and the appendix per export; a single
+question can be exported from its page.
+
+PDF uses WeasyPrint when it is installed (full CSS, running header, page numbers) and otherwise
+PyMuPDF's built-in layout engine, which needs no system libraries. Both come from the same HTML.
 
 ### The input format
 

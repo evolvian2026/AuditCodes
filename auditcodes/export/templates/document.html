@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{{ options.title }}</title>
+<style>{{ css | safe }}</style>
+</head>
+<body>
+<div class="cover">
+  <h1 class="doc">{{ options.title }}</h1>
+  <p class="sub">{% if options.source_name %}Source: {{ options.source_name }} · {% endif %}{{ questions | length }} question{{ '' if questions | length == 1 else 's' }} · generated {{ options.generated_at }} by AuditCodes</p>
+  <table>
+    <thead><tr><th>#</th><th>DBNO</th><th>Title</th><th>Area</th><th>Difficulty</th><th>Tests (sample + hidden)</th><th>Solutions</th>{% if options.include_audit %}<th>Audit</th>{% endif %}</tr></thead>
+    <tbody>
+    {% for row in summary %}{% set q = row.q %}
+      <tr><td>{{ q.number or loop.index }}</td><td>{{ q.id }}</td><td>{{ q.title }}</td><td>{{ q.area or '' }}</td><td>{{ q.difficulty.value if q.difficulty else '' }}{% if q.lod %} ({{ q.lod }}){% endif %}</td><td>{{ row.tests }}</td><td>{{ row.languages }}</td>{% if options.include_audit %}<td>{{ row.audit }}</td>{% endif %}</tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% for q in questions %}
+<section class="question">
+  <h1 class="q">Q.{{ q.number or loop.index }} {{ q.title }}</h1>
+  <p class="meta">DBNO: <b>{{ q.id }}</b>{% if q.area %} &nbsp;·&nbsp; Area: {{ q.area }}{% endif %}{% if q.difficulty %} &nbsp;·&nbsp; Difficulty: {{ q.difficulty.value | capitalize }}{% if q.lod %} (LOD {{ q.lod }}){% endif %}{% endif %}{% if q.time_limit_seconds %} &nbsp;·&nbsp; Time limit: {{ q.time_limit_seconds | round(1) }} s{% endif %}</p>
+
+  <h2>Problem Statement</h2>
+  {{ q.description_md | md | safe }}
+  {% if q.input_format_md %}<h2>Input Explanation</h2>{{ q.input_format_md | md | safe }}{% endif %}
+  {% if q.output_format_md %}<h2>Output Explanation</h2>{{ q.output_format_md | md | safe }}{% endif %}
+  {% if q.constraints %}<h2>Constraints</h2><ul>{% for c in q.constraints %}<li>{{ c.text }}</li>{% endfor %}</ul>{% endif %}
+
+  <h2>Sample Test Cases ({{ q.samples | length }})</h2>
+  {% for t in q.samples %}
+    <h3>{{ t.label or ('Example ' ~ loop.index) }}</h3>
+    <table class="io"><tr><td><p class="lbl">Input</p><pre>{{ t.stdin | code }}</pre></td><td><p class="lbl">Output</p><pre>{{ t.stdout | code }}</pre></td></tr></table>
+    {% if t.explanation %}<p class="small">{{ t.explanation }}</p>{% endif %}
+  {% endfor %}
+  {% if q.sample_explanation_md %}<h2>Sample Test Case Explanation</h2>{{ q.sample_explanation_md | md | safe }}{% endif %}
+
+  {% if options.include_drivers %}{% for lang in languages_of(q) if lang in q.drivers %}
+    <h2>Driver Code — {{ language_name(lang) }}</h2>
+    <pre>{{ q.drivers[lang] | code }}</pre>
+  {% endfor %}{% endif %}
+
+  {% if options.include_editorial and q.editorial_md %}<h2>Editorial</h2>{{ q.editorial_md | md | safe }}{% endif %}
+
+  {% if options.include_solutions %}{% for lang in languages_of(q) if lang in q.solutions %}
+    <h2>Code Editorial — {{ language_name(lang) }}</h2>
+    <pre>{{ q.solutions[lang] | code }}</pre>
+  {% endfor %}{% endif %}
+
+  {% if options.include_hidden %}
+  <h2>Hidden Test Cases ({{ q.hidden_tests | length }})</h2>
+  {% for t in q.hidden_tests %}
+    <h3>{{ t.label or ('Test Case ' ~ loop.index) }}{% if t.difficulty %}<span class="badge">Level: {{ t.difficulty.value | capitalize }}</span>{% endif %}{% if t.points is not none %}<span class="badge">Points: {{ t.points }}</span>{% endif %}{% if t.origin.value == 'generated' %}<span class="badge generated">generated · {{ t.category.value | replace('_', ' ') }}</span>{% endif %}</h3>
+    <table class="io"><tr><td><p class="lbl">Input</p><pre>{{ t.stdin | code }}</pre></td><td><p class="lbl">Output</p><pre>{{ t.stdout | code }}</pre></td></tr></table>
+  {% endfor %}
+  {% endif %}
+</section>
+{% endfor %}
+
+{% if options.include_audit and reports %}
+<section class="appendix">
+  <h1 class="q">Appendix — Audit Report</h1>
+  <p class="small">Findings marked <i>execution</i> were established by compiling and running code; findings marked <i>model</i> are reviewed proposals. Status shows what the reviewer decided; applied changes are already reflected in the questions above.</p>
+  {% for q in questions %}{% set r = reports.get(q.id) %}{% if r %}
+    <h2>Q.{{ q.number or loop.index }} {{ q.title }} (DBNO {{ q.id }})</h2>
+    <p class="small">Audited {{ r.finished_at or r.started_at }}{% if r.llm_model %} · model {{ r.llm_model }}{% endif %}.
+    {% for lang, v in r.verifications.items() %} {{ language_name(lang) }} editorial: {% if not v.build_ok %}build failed{% else %}{{ v.passed }}/{{ v.total }} tests{% endif %}{% if v.normalized %} (after normalisation){% endif %}.{% endfor %}
+    {% if r.oracle and r.oracle.established %} Oracle: {{ r.oracle.primary }} + {{ r.oracle.secondary }}.{% endif %}
+    {% if r.generation and r.generation.generated %} Generated {{ r.generation.generated }} hidden test(s).{% endif %}</p>
+    {% if r.findings %}
+    <table>
+      <thead><tr><th>Severity</th><th>Rule</th><th>Source</th><th>Component</th><th>Finding</th><th>Status</th></tr></thead>
+      <tbody>
+      {% for f in r.sorted_findings %}
+        <tr><td class="sev-{{ f.severity.value }}">{{ f.severity.value }}</td><td>{{ f.rule_id }}</td><td>{{ 'execution' if f.source.value == 'dynamic' else 'model' }}</td><td>{{ f.component }}</td><td><b>{{ f.title }}</b><br>{{ f.message }}</td><td>{{ f.status.value }}{% if f.applied %} (applied){% endif %}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}<p>No findings.</p>{% endif %}
+  {% endif %}{% endfor %}
+</section>
+{% endif %}
+</body>
+</html>

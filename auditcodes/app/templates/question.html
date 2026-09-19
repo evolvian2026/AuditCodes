@@ -5,6 +5,7 @@
   {% if prev_id %}· <a href="/jobs/{{ job.id }}/q/{{ prev_id }}">prev</a>{% endif %}
   · <span class="muted">{{ position[0] }} / {{ position[1] }}</span>
   {% if next_id %}· <a href="/jobs/{{ job.id }}/q/{{ next_id }}">next</a>{% endif %}
+  · <a href="/jobs/{{ job.id }}/export.pdf?q={{ q.id }}">PDF</a> · <a href="/jobs/{{ job.id }}/export.docx?q={{ q.id }}">DOCX</a>
 {% endblock %}
 {% block content %}
 <div class="qhead">

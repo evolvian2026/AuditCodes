@@ -200,3 +200,17 @@ def test_accept_verified_applies_everything(client, audit_job):
     assert len(q["hidden_tests"]) == 9 and "’" not in q["solutions"]["java"]
     page = client.get(f"/jobs/{job}/q/105376").text
     assert page.count("accepted · applied") == 2 and "If you accept all" not in page
+
+
+def test_export_routes(client, audit_job):
+    r = client.get(f"/jobs/{audit_job}/export.html?q=105402")
+    assert r.status_code == 200 and "Sunehri" in r.text and "AGENT RA" not in r.text
+    r = client.get(f"/jobs/{audit_job}/export.pdf?hidden=0")
+    assert r.status_code == 200 and r.content[:4] == b"%PDF" and "attachment" in r.headers["content-disposition"]
+    r = client.get(f"/jobs/{audit_job}/export.docx")
+    assert r.status_code == 200 and r.content[:2] == b"PK"
+    r = client.get(f"/jobs/{audit_job}/export.zip")
+    assert r.status_code == 200 and r.content[:2] == b"PK" and r.headers["content-type"] == "application/zip"
+    assert client.get(f"/jobs/{audit_job}/export.json").status_code == 200
+    assert client.get(f"/jobs/{audit_job}/export.xls").status_code == 404
+    assert "PDF engine:" in client.get(f"/jobs/{audit_job}").text

@@ -69,3 +69,5 @@ pre.diff { max-height: 24rem; font-size: .8rem; line-height: 1.35; }
 .notice.projection { background: #eff6ff; border: 1px solid #bfdbfe; display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; }
 .notice.projection .bad { color: var(--bad); }
 table.generated td pre { max-height: 8rem; max-width: 28rem; font-size: .75rem; }
+.export { display: flex; flex-wrap: wrap; gap: 1rem; align-items: center; padding: .8rem 1rem; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+.export select { font: inherit; padding: .35rem; }

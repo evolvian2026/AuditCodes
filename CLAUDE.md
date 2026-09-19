@@ -27,3 +27,6 @@
   (`audit/oracle.py`, `audit/testgen.py`); never let the model author an expected output directly.
 - Ported solutions and driver scaffolds (`audit/complete.py`) are offered only after the sandbox
   runs them on the full suite; the scaffold check in `scaffold_problems` must stay mechanical.
+- Exports (`auditcodes/export/`) render from one HTML template; PDF backends must both work from
+  it (WeasyPrint full CSS; PyMuPDF Story a subset — keep `_story_css` simple). DOCX is built from
+  the model, not from HTML.
