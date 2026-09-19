@@ -6,8 +6,9 @@
 {% if job.document_warnings %}
 <div class="notice warn"><strong>Document warnings</strong><ul>{% for w in job.document_warnings %}<li>{{ w }}</li>{% endfor %}</ul></div>
 {% endif %}
+{% include "partials/audit_all.html" %}
 <table class="questions">
-  <thead><tr><th>#</th><th>DBNO</th><th>Title</th><th>Area</th><th>Difficulty</th><th>Samples</th><th>Hidden</th><th>Code</th><th>Extraction</th><th>Warnings</th></tr></thead>
+  <thead><tr><th>#</th><th>DBNO</th><th>Title</th><th>Area</th><th>Difficulty</th><th>Samples</th><th>Hidden</th><th>Code</th><th>Extraction</th><th>Warnings</th><th>Audit</th></tr></thead>
   <tbody>
   {% for r in rows %}{% set q = r.q %}
     <tr>
@@ -21,6 +22,7 @@
       <td>{{ r.languages | join(', ') }}</td>
       <td><span class="conf {{ r.min_conf | conf }}">{% if r.min_conf is not none %}{{ '%d' % (r.min_conf * 100) }}%{% else %}—{% endif %}</span></td>
       <td>{% if q.provenance.warnings %}<span class="badge warn">{{ q.provenance.warnings | length }}</span>{% else %}<span class="badge ok">0</span>{% endif %}</td>
+      <td>{% if r.report %}{% set c = r.report.counts() %}{% for sev in ["blocker", "major", "minor"] %}{% if c[sev] %}<span class="badge sev-{{ sev }}">{{ c[sev] }} {{ sev }}</span> {% endif %}{% endfor %}{% if not c.blocker and not c.major and not c.minor %}<span class="badge ok">clean</span>{% endif %}{% else %}<span class="muted">—</span>{% endif %}</td>
     </tr>
   {% endfor %}
   </tbody>

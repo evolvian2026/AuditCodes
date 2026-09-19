@@ -1,0 +1,16 @@
+<div id="audit-all">
+  {% if task and not task.finished %}
+    <div hx-get="/jobs/{{ job.id }}/audit/{{ task.id }}" hx-trigger="every 2s" hx-target="#audit-all" hx-swap="outerHTML">
+      <span class="spinner"></span> auditing {{ task.result.done + 1 if task.result else '' }} of {{ task.result.total if task.result else '?' }}{% if task.result and task.result.current %} — question {{ task.result.current }}{% endif %}…
+    </div>
+  {% elif task and task.status == "failed" %}
+    <p class="notice bad">audit crashed</p><pre class="log">{{ task.error }}</pre>
+  {% elif task %}
+    <p class="notice ok">Audit finished for {{ task.result.total }} question(s). <a href="/jobs/{{ job.id }}">Refresh</a> to see the counts.</p>
+  {% else %}
+    <form hx-post="/jobs/{{ job.id }}/audit" hx-target="#audit-all" hx-swap="outerHTML">
+      <button type="submit">Audit all questions</button>
+      {% if not llm_model %}<span class="muted">no ANTHROPIC_API_KEY: execution-based checks only</span>{% else %}<span class="muted">execution checks + {{ llm_model }}</span>{% endif %}
+    </form>
+  {% endif %}
+</div>

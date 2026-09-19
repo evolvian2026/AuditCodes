@@ -13,8 +13,8 @@ Supported solution languages: C, C++, Java, Python, JavaScript.
 |---|---|---|
 | 1 | Executable core: canonical schema, sandboxed runner, language specs, generated drivers, test harness | **done** |
 | 2 | PDF ingest (layout-aware recovery, template parser), stdio harness, extraction review web app | **done** |
-| 3 | Rule catalog, static audit, dynamic verification, findings review | next |
-| 4 | Oracle establishment, hidden-test generation, repair loop | |
+| 3 | Rule catalog, execution-based audit, model-driven review, findings with patches, accept/reject UI | **done** |
+| 4 | Oracle establishment, hidden-test generation, repair loop | next |
 | 5 | Missing-language solution generation | |
 | 6 | PDF / DOCX / JSON / ZIP export | |
 
@@ -32,9 +32,14 @@ toolchain is missing is skipped, not failed.
 ## Using it
 
 ```bash
-.venv/bin/python -m auditcodes serve               # http://127.0.0.1:8000
+export ANTHROPIC_API_KEY=...                        # enables the model-driven stages
+.venv/bin/python -m auditcodes check-llm            # confirms the API is reachable
+.venv/bin/python -m auditcodes serve                # http://127.0.0.1:8000
 .venv/bin/python -m auditcodes extract bank.pdf -o questions.json --assets images/
+.venv/bin/python -m auditcodes audit bank.pdf -o reports.json   # headless audit; --no-llm for execution checks only
 ```
+
+`AUDITCODES_MODEL` overrides the model (default `claude-opus-5`).
 
 Upload a question-bank PDF; each question is shown with every extracted component, a per-field
 extraction confidence, and the warnings the extractor raised (a wrapped code line it re-joined,
@@ -44,6 +49,31 @@ question's time limit, in the sandbox. Jobs live under `data/jobs/<job id>/` as 
 `source.pdf`, `questions.json` (the canonical model — also downloadable as Export JSON), `assets/`.
 
 The app is a local tool with no authentication; keep it on localhost or behind your own proxy.
+
+### The audit
+
+"Run audit" (per question) or "Audit all questions" (per document) produces findings against the
+rule catalog in `auditcodes/audit/rules.py`. Two kinds:
+
+- **execution** findings are established by compiling and running: the editorial does not build
+  (`SOL-001`), only builds after typographic normalisation (`SOL-002`, with a verified patch),
+  disagrees with a sample or hidden test (`SOL-003/004`), crashes or times out (`SOL-005/006`),
+  duplicate hidden tests or tests that copy a sample (`HIDE-001/002`), too few tests (`HIDE-003`),
+  inputs that violate the constraints (`HIDE-005`, via a model-written validator program that the
+  sandbox runs on every input), and a driver whose scaffold does not work with the editorial's
+  logic (`DRV-001/002`, via a model-spliced program the sandbox runs).
+- **model** findings are proposals from Claude: clarity, missing information, constraint
+  consistency, sample explanations, editorial quality, language-specific risks, cross-component
+  consistency, difficulty assessment. A patch on code is compiled and run before it is shown and
+  carries the result; a patch on prose is shown as a diff.
+
+Every finding has a severity (blocker / major / minor / info), the component it concerns, evidence,
+and — where a safe textual fix exists — a patch. Accept applies the patch to the question and
+re-validates the model; reject and waive record the decision. Reports live in
+`data/jobs/<job>/audit/<question id>.json`.
+
+Without an API key the execution-based checks still run in full; the model stages are skipped
+and the report says so.
 
 ### The input format
 

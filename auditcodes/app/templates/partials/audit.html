@@ -1,0 +1,67 @@
+{# Audit panel for one question. Context: job, q, task (running/failed task or None), report (AuditReport or None), error. #}
+<div id="audit-panel" class="audit">
+  {% if task and not task.finished %}
+    <div hx-get="/jobs/{{ job.id }}/q/{{ q.id }}/audit/{{ task.id }}" hx-trigger="every 2s" hx-target="#audit-panel" hx-swap="outerHTML">
+      <span class="spinner"></span> auditing — compiling, running tests{% if llm_model %}, consulting {{ llm_model }}{% endif %}…
+    </div>
+  {% elif task and task.status == "failed" %}
+    <p class="notice bad">audit crashed</p><pre class="log">{{ task.error }}</pre>
+  {% else %}
+    <form hx-post="/jobs/{{ job.id }}/q/{{ q.id }}/audit" hx-target="#audit-panel" hx-swap="outerHTML" class="audit-run">
+      <button type="submit">{{ 'Re-run audit' if report else 'Run audit' }}</button>
+      {% if not llm_model %}<span class="muted">no ANTHROPIC_API_KEY: execution-based checks only</span>{% endif %}
+      {% if report %}<span class="muted">last run {{ report.finished_at }}{% if report.llm_model %} · {{ report.llm_model }}{% endif %}</span>{% endif %}
+    </form>
+    {% if error %}<p class="notice bad">{{ error }}</p>{% endif %}
+    {% if report %}
+      {% set counts = report.counts() %}
+      <div class="audit-summary">
+        {% for sev in ["blocker", "major", "minor", "info"] %}<span class="badge sev-{{ sev }}">{{ counts[sev] }} {{ sev }}</span>{% endfor %}
+        <span class="muted">open · {{ report.findings | length }} total</span>
+        {% for lang, v in report.verifications.items() %}
+          <span class="badge {{ 'ok' if v.all_passed else 'bad' }}">{{ lang }} editorial: {% if not v.build_ok %}build failed{% else %}{{ v.passed }}/{{ v.total }}{% endif %}{% if v.normalized %} (normalised){% endif %}</span>
+        {% endfor %}
+        {% if report.validator %}<span class="badge {{ 'ok' if report.validator.established else '' }}">validator {{ 'established' if report.validator.established else 'not established' }}</span>{% endif %}
+      </div>
+      {% if report.error %}<details class="notice warn"><summary>some stages failed</summary><pre class="log">{{ report.error }}</pre></details>{% endif %}
+      <details class="stages"><summary class="muted">what ran</summary><ul>{% for s in report.stages %}<li>{{ s }}</li>{% endfor %}</ul></details>
+      {% if not report.findings %}<p class="notice ok">No findings.</p>{% endif %}
+      {% for f in report.sorted_findings %}
+        <article class="finding sev-{{ f.severity.value }} status-{{ f.status.value }}">
+          <header>
+            <span class="badge sev-{{ f.severity.value }}">{{ f.severity.value }}</span>
+            <code class="rule" title="{{ rule(f.rule_id).description }}">{{ f.rule_id }}</code>
+            <strong>{{ f.title }}</strong>
+            <span class="badge {{ 'ok' if f.source.value == 'dynamic' else '' }}" title="{{ 'established by compiling and running code' if f.source.value == 'dynamic' else 'proposed by the model; verify before accepting' }}">{{ 'execution' if f.source.value == 'dynamic' else 'model' }}</span>
+            {% if f.confidence is not none %}<span class="muted">conf {{ '%d' % (f.confidence * 100) }}%</span>{% endif %}
+            <a class="component" href="#field-{{ f.component | replace('.', '-') }}">{{ f.component }}</a>
+            {% if f.status.value != 'open' %}<span class="badge">{{ f.status.value }}{% if f.applied %} · applied{% endif %}</span>{% endif %}
+          </header>
+          <p>{{ f.message }}</p>
+          {% if f.evidence %}<pre class="evidence">{{ f.evidence }}</pre>{% endif %}
+          {% if f.patch %}
+            <div class="patch">
+              <div class="patch-head">
+                {% if f.patch.op == 'remove' %}<strong>Proposed: remove {{ f.patch.path }}</strong>
+                {% else %}<strong>Proposed change to <code>{{ f.patch.path }}</code></strong>{% endif %}
+                {% if f.patch.verified is true %}<span class="badge ok">verified by execution{% if f.patch.verification_note %}: {{ f.patch.verification_note }}{% endif %}</span>
+                {% elif f.patch.verified is false %}<span class="badge bad">execution check failed{% if f.patch.verification_note %}: {{ f.patch.verification_note }}{% endif %}</span>
+                {% else %}<span class="badge">not executable — review the diff</span>{% endif %}
+              </div>
+              {% if f.patch.op == 'set' %}<pre class="diff">{{ f.patch.old_value | diff(f.patch.new_value, f.patch.path) | safe }}</pre>{% endif %}
+            </div>
+          {% endif %}
+          {% if f.status.value == 'open' %}
+          <div class="actions">
+            {% if f.patch %}<button hx-post="/jobs/{{ job.id }}/q/{{ q.id }}/findings/{{ f.id }}/accept" hx-target="#audit-panel" hx-swap="outerHTML">Accept &amp; apply</button>{% endif %}
+            <button class="link" hx-post="/jobs/{{ job.id }}/q/{{ q.id }}/findings/{{ f.id }}/reject" hx-target="#audit-panel" hx-swap="outerHTML">Reject</button>
+            <button class="link" hx-post="/jobs/{{ job.id }}/q/{{ q.id }}/findings/{{ f.id }}/waive" hx-target="#audit-panel" hx-swap="outerHTML">Waive</button>
+          </div>
+          {% elif not f.applied %}
+          <div class="actions"><button class="link" hx-post="/jobs/{{ job.id }}/q/{{ q.id }}/findings/{{ f.id }}/reopen" hx-target="#audit-panel" hx-swap="outerHTML">Reopen</button></div>
+          {% endif %}
+        </article>
+      {% endfor %}
+    {% endif %}
+  {% endif %}
+</div>

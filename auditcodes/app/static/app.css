@@ -48,3 +48,21 @@ button.link { border: 0; background: none; color: var(--accent); padding: 0 .3re
 .spinner { display: inline-block; width: .9rem; height: .9rem; border: 2px solid #cbd5e1; border-top-color: var(--accent); border-radius: 50%; animation: spin 1s linear infinite; vertical-align: middle; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (max-width: 800px) { .case-body, .diff { grid-template-columns: 1fr; } }
+
+/* audit */
+.audit-run { display: flex; gap: 1rem; align-items: center; margin: .5rem 0; }
+.audit-summary { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin: .5rem 0 1rem; }
+.badge.sev-blocker { background: #fee2e2; color: var(--bad); } .badge.sev-major { background: #ffedd5; color: var(--warn); } .badge.sev-minor { background: #fef9c3; color: #854d0e; } .badge.sev-info { background: #e0f2fe; color: #075985; }
+.stages ul { margin: .2rem 0 .5rem; padding-left: 1.2rem; color: var(--muted); font-size: .85rem; }
+.finding { background: var(--panel); border: 1px solid var(--line); border-left: 4px solid #9ca3af; border-radius: 8px; padding: .6rem 1rem; margin: .6rem 0; }
+.finding.sev-blocker { border-left-color: var(--bad); } .finding.sev-major { border-left-color: var(--warn); } .finding.sev-minor { border-left-color: #ca8a04; } .finding.sev-info { border-left-color: #0284c7; }
+.finding.status-accepted, .finding.status-rejected, .finding.status-waived { opacity: .6; }
+.finding header { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
+.finding header .rule { font-size: .8rem; color: var(--muted); } .finding .component { margin-left: auto; font-size: .8rem; }
+.finding p { margin: .4rem 0; }
+.finding .evidence { font-size: .8rem; max-height: 12rem; }
+.patch { margin: .5rem 0; } .patch-head { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; margin-bottom: .3rem; }
+pre.diff { max-height: 24rem; font-size: .8rem; line-height: 1.35; }
+.diff-add { color: #166534; background: #dcfce7; display: block; } .diff-del { color: #991b1b; background: #fee2e2; display: block; }
+.diff-hunk { color: #6b21a8; display: block; } .diff-file { color: var(--muted); display: block; } .diff-ctx { display: block; }
+.notice.ok { background: #f0fdf4; border: 1px solid #bbf7d0; }

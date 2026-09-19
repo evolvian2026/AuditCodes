@@ -32,3 +32,20 @@ def confidence_class(value: float | None) -> str:
 
 def escape(text: str | None) -> str:
     return html.escape(text or "")
+
+
+def diff_html(diff_text: str) -> str:
+    """Colour a unified diff; the text is escaped, classes drive the colours."""
+    out = []
+    for line in diff_text.split("\n"):
+        cls = "diff-ctx"
+        if line.startswith("+++") or line.startswith("---"):
+            cls = "diff-file"
+        elif line.startswith("@@"):
+            cls = "diff-hunk"
+        elif line.startswith("+"):
+            cls = "diff-add"
+        elif line.startswith("-"):
+            cls = "diff-del"
+        out.append(f'<span class="{cls}">{html.escape(line)}</span>')
+    return "\n".join(out)

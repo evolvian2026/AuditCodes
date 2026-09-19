@@ -16,3 +16,10 @@
   a warning and lower the field's confidence, and let the audit propose the change.
 - Questions from the PDF are `io_mode = stdio` (complete programs, raw stdin/stdout tests);
   `function` mode with generated drivers is for typed questions.
+- Audit rules live in `auditcodes/audit/rules.py` with stable ids; `dynamic` rules may only be
+  raised from execution results, `static` rules come from the model and stay proposals. A model
+  patch on code must be run through the harness before it is shown (`audit/static.py`).
+- Model calls go through `auditcodes/llm/client.py` (`ClaudeLLM`, structured outputs, cached
+  system prompt) and are tested with `MockLLM`; keep prompts in `auditcodes/llm/prompts.py`.
+- Field paths (`solutions.java`, `hidden_tests.3.stdout`, ...) are the shared addressing scheme
+  for edits, patches and findings; `auditcodes/edits.py` and `auditcodes/fields.py` own them.

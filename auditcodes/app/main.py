@@ -12,30 +12,24 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from ..audit import run_audit
+from ..audit.patches import PatchError, apply_patch, shift_indices_after_removal, unified_diff
+from ..audit.report import AuditReport, FindingStatus
+from ..audit.rules import get_rule
 from ..exec.harness import SuiteResult, run_stdio_suite
 from ..exec.languages import LANGUAGES
 from ..exec.runner import Limits, LocalRunner
 from ..ingest.normalize import normalize_code
+from ..llm.client import default_llm
 from ..models import IOMode, Language, Question
-from .edits import EditError, apply_edit
-from .render import confidence_class, markdown
+from ..edits import EditError, apply_edit
+from ..fields import SECTIONS, field_ctx
+from .render import confidence_class, diff_html, markdown
 from .store import JobNotFound, JobStore
 from .tasks import TaskRegistry
 
 _HERE = Path(__file__).parent
 _HTMX_CDN = "https://cdn.jsdelivr.net/npm/htmx.org@2.0.4/dist/htmx.min.js"
-
-SECTIONS: list[tuple[str, str, str]] = [
-    # (field path, label, kind)
-    ("description_md", "Problem Statement", "md"),
-    ("input_format_md", "Input Explanation", "md"),
-    ("output_format_md", "Output Explanation", "md"),
-    ("constraints", "Constraints", "lines"),
-    ("sample_explanation_md", "Sample Test Case Explanation", "md"),
-    ("editorial_md", "Editorial", "md"),
-]
-_CONF_KEY = {"description_md": "description", "input_format_md": "input_format", "output_format_md": "output_format", "sample_explanation_md": "sample_explanation", "editorial_md": "editorial", "constraints": "constraints"}
-
 
 def create_app(data_dir: str | Path | None = None) -> FastAPI:
     data_dir = Path(data_dir or os.environ.get("AUDITCODES_DATA", "data/jobs"))
@@ -47,6 +41,10 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
     templates.env.filters["conf"] = confidence_class
     templates.env.globals["htmx_src"] = "/static/htmx.min.js" if (_HERE / "static" / "htmx.min.js").exists() else _HTMX_CDN
     templates.env.globals["languages"] = [(l.value, LANGUAGES[l].display_name) for l in Language]
+    templates.env.filters["diff"] = lambda old, new, path: diff_html(unified_diff(old, new, path))
+    templates.env.globals["rule"] = get_rule
+    llm = default_llm()
+    templates.env.globals["llm_model"] = llm.model if llm else None
 
     app = FastAPI(title="AuditCodes")
     app.mount("/static", StaticFiles(directory=str(_HERE / "static")), name="static")
@@ -89,15 +87,17 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
     def job(request: Request, job_id: str):
         meta = get_job(job_id)
         questions = store.load_questions(job_id)
+        reports = store.load_reports(job_id)
         rows = [
             {
                 "q": q,
                 "min_conf": min(q.provenance.confidence.values(), default=None),
                 "languages": sorted({l.value for l in q.solutions} | {l.value for l in q.drivers}),
+                "report": reports.get(q.id),
             }
             for q in questions
         ]
-        return page(request, "job.html", job=meta, rows=rows)
+        return page(request, "job.html", job=meta, rows=rows, task=None)
 
     @app.post("/jobs/{job_id}/delete")
     def delete_job(job_id: str):
@@ -145,6 +145,8 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
             next_id=ids[i + 1] if i + 1 < len(ids) else None,
             position=(i + 1, len(ids)),
             verifications=verifications,
+            report=store.load_report(job_id, qid),
+            task=None,
         )
 
     @app.post("/jobs/{job_id}/q/{qid}/edit", response_class=HTMLResponse)
@@ -154,9 +156,9 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
         try:
             updated = apply_edit(q, path, value)
         except EditError as e:
-            return page(request, "partials/editable.html", job=meta, q=q, **_field_ctx(q, path), error=str(e))
+            return page(request, "partials/editable.html", job=meta, q=q, **field_ctx(q, path), error=str(e))
         store.update_question(job_id, updated)
-        return page(request, "partials/editable.html", job=meta, q=updated, **_field_ctx(updated, path), saved=True)
+        return page(request, "partials/editable.html", job=meta, q=updated, **field_ctx(updated, path), saved=True)
 
     # --- verification -------------------------------------------------------------------------
 
@@ -197,47 +199,107 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
             raise HTTPException(404, "task not found")
         return page(request, "partials/verify.html", job=meta, q=q, language=language, task=task, result=task.result if task.status == "done" else None)
 
+    # --- audit --------------------------------------------------------------------------------
+
+    def audit_one(job_id: str, qid: str) -> AuditReport:
+        q = store.question(job_id, qid)
+        report = run_audit(q, runner=runner, llm=llm)
+        store.save_report(job_id, report)
+        return report
+
+    @app.post("/jobs/{job_id}/q/{qid}/audit", response_class=HTMLResponse)
+    def audit_question(request: Request, job_id: str, qid: str):
+        meta = get_job(job_id)
+        q = get_question(job_id, qid)
+        task = tasks.submit("audit", lambda: audit_one(job_id, qid))
+        return page(request, "partials/audit.html", job=meta, q=q, task=task, report=None)
+
+    @app.get("/jobs/{job_id}/q/{qid}/audit/{task_id}", response_class=HTMLResponse)
+    def audit_status(request: Request, job_id: str, qid: str, task_id: str):
+        meta = get_job(job_id)
+        q = get_question(job_id, qid)
+        task = tasks.get(task_id)
+        if task is None:
+            raise HTTPException(404, "task not found")
+        if task.finished:
+            return page(request, "partials/audit.html", job=meta, q=q, task=None if task.status == "done" else task, report=store.load_report(job_id, qid))
+        return page(request, "partials/audit.html", job=meta, q=q, task=task, report=None)
+
+    @app.post("/jobs/{job_id}/audit", response_class=HTMLResponse)
+    def audit_all(request: Request, job_id: str):
+        meta = get_job(job_id)
+        ids = [q.id for q in store.load_questions(job_id)]
+        progress = {"done": 0, "total": len(ids), "current": None}
+
+        def work():
+            for qid in ids:
+                progress["current"] = qid
+                audit_one(job_id, qid)
+                progress["done"] += 1
+            return progress
+
+        task = tasks.submit("audit_all", work)
+        task.result = progress  # visible while running
+        return page(request, "partials/audit_all.html", job=meta, task=task)
+
+    @app.get("/jobs/{job_id}/audit/{task_id}", response_class=HTMLResponse)
+    def audit_all_status(request: Request, job_id: str, task_id: str):
+        meta = get_job(job_id)
+        task = tasks.get(task_id)
+        if task is None:
+            raise HTTPException(404, "task not found")
+        return page(request, "partials/audit_all.html", job=meta, task=task)
+
+    @app.post("/jobs/{job_id}/q/{qid}/findings/{fid}/{action}", response_class=HTMLResponse)
+    def finding_action(request: Request, job_id: str, qid: str, fid: str, action: str):
+        meta = get_job(job_id)
+        q = get_question(job_id, qid)
+        report = store.load_report(job_id, qid)
+        f = report.get(fid) if report else None
+        if f is None:
+            raise HTTPException(404, "finding not found")
+        error = None
+        if action == "accept":
+            if f.patch is None:
+                error = "this finding has no patch to apply"
+            else:
+                try:
+                    updated = apply_patch(q, f.patch)
+                    if f.patch.op == "remove":
+                        group, idx = f.patch.path.rsplit(".", 1)
+                        shift_indices_after_removal(report.findings, group, int(idx))
+                    store.update_question(job_id, updated)
+                    q = updated
+                    f.status, f.applied = FindingStatus.ACCEPTED, True
+                except PatchError as e:
+                    error = str(e)
+        elif action == "reject":
+            f.status = FindingStatus.REJECTED
+        elif action == "waive":
+            f.status = FindingStatus.WAIVED
+        elif action == "reopen":
+            if f.applied:
+                error = "an applied patch cannot be reopened; edit the field instead"
+            else:
+                f.status = FindingStatus.OPEN
+        else:
+            raise HTTPException(400, "unknown action")
+        store.save_report(job_id, report)
+        resp = page(request, "partials/audit.html", job=meta, q=q, task=None, report=report, error=error)
+        if action == "accept" and not error:
+            resp.headers["HX-Refresh"] = "true"  # the field content changed; reload the page
+        return resp
+
     return app
 
 
 def _sections(q: Question) -> list[dict[str, Any]]:
     out = []
     for path, label, kind in SECTIONS:
-        ctx = _field_ctx(q, path)
+        ctx = field_ctx(q, path)
         ctx["label"] = label
         out.append(ctx)
     return out
-
-
-def _field_ctx(q: Question, path: str) -> dict[str, Any]:
-    """Everything the editable partial needs for one field."""
-    kind = "text"
-    label = path
-    conf = None
-    raw: str
-    for p, lbl, k in SECTIONS:
-        if p == path:
-            kind, label = k, lbl
-            conf = q.provenance.confidence.get(_CONF_KEY[p])
-    if path == "constraints":
-        raw = "\n".join(c.text for c in q.constraints)
-    elif path.startswith(("drivers.", "solutions.")):
-        group, lang = path.split(".", 1)
-        raw = getattr(q, group).get(Language(lang), "")
-        kind = "code"
-        label = f"{'Driver Code' if group == 'drivers' else 'Code Editorial'} — {LANGUAGES[Language(lang)].display_name}"
-        conf = q.provenance.confidence.get("driver" if group == "drivers" else "solution")
-    elif path.startswith(("samples.", "hidden_tests.")):
-        group, idx, field = path.split(".")
-        case = getattr(q, group)[int(idx)]
-        raw = getattr(case, field) or ""
-        kind = "code"
-        label = f"{case.label or (group[:-1].replace('_', ' ') + ' ' + str(int(idx) + 1))} — {field}"
-        conf = q.provenance.confidence.get("samples" if group == "samples" else "hidden")
-    else:
-        value = getattr(q, path, None)
-        raw = "" if value is None else (value.value if hasattr(value, "value") else str(value))
-    return {"path": path, "label": label, "kind": kind, "raw": raw, "confidence": conf}
 
 
 def _suite_to_json(suite: SuiteResult, q: Question, normalization: str | None) -> dict[str, Any]:

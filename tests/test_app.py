@@ -8,7 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from auditcodes.app import create_app
-from auditcodes.app.edits import EditError, apply_edit
+from auditcodes.edits import EditError, apply_edit
 from auditcodes.models import Language
 
 from .conftest import require_language
@@ -117,3 +117,69 @@ def test_delete_job(client, job_id):
     r = client.post(f"/jobs/{job_id}/delete", follow_redirects=False)
     assert r.status_code == 303
     assert client.get(f"/jobs/{job_id}").status_code == 404
+
+
+# --- audit flows -----------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def audit_job(client):
+    r = client.post("/jobs", files={"file": ("coding_ques_sample.pdf", FIXTURE.read_bytes(), "application/pdf")}, follow_redirects=False)
+    return r.headers["location"].rsplit("/", 1)[1]
+
+
+def _wait(client, url, needle="hx-trigger", timeout=180):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        r = client.get(url)
+        if needle not in r.text:
+            return r
+        time.sleep(0.5)
+    raise AssertionError("task did not finish")
+
+
+def test_audit_question_and_accept_patch(client, audit_job):
+    require_language(Language.JAVA)
+    r = client.post(f"/jobs/{audit_job}/q/105376/audit")
+    assert r.status_code == 200 and "hx-trigger" in r.text
+    url = r.text.split('hx-get="')[1].split('"')[0]
+    r = _wait(client, url)
+    assert "SOL-002" in r.text and "HIDE-001" in r.text and "verified by execution" in r.text
+    assert "1 blocker" in r.text and "1 major" in r.text
+    page = client.get(f"/jobs/{audit_job}/q/105376").text
+    assert "SOL-002" in page and "Re-run audit" in page
+    # job overview shows the counts
+    assert "1 blocker" in client.get(f"/jobs/{audit_job}").text
+    # accept the remove-duplicate patch
+    fid = page.split("HIDE-001")[0].rsplit("findings/", 1)[-1] if "findings/" in page.split("HIDE-001")[0] else None
+    import re
+
+    ids = re.findall(r'findings/([0-9a-f]+)/accept', page)
+    report = json.loads((Path(client.app.state.store.root) / audit_job / "audit" / "105376.json").read_text())
+    dup_id = next(f["id"] for f in report["findings"] if f["rule_id"] == "HIDE-001")
+    assert dup_id in ids
+    r = client.post(f"/jobs/{audit_job}/q/105376/findings/{dup_id}/accept")
+    assert r.status_code == 200 and r.headers.get("HX-Refresh") == "true"
+    q = next(x for x in json.loads(client.get(f"/jobs/{audit_job}/export.json").content) if x["id"] == "105376")
+    assert len(q["hidden_tests"]) == 9
+    assert "accepted · applied" in client.get(f"/jobs/{audit_job}/q/105376").text
+    # accepting again fails cleanly (the item is gone)
+    r = client.post(f"/jobs/{audit_job}/q/105376/findings/{dup_id}/accept")
+    assert "no longer present" in r.text or "accepted" in r.text
+    # reject / waive / reopen on the code patch finding
+    sol_id = next(f["id"] for f in report["findings"] if f["rule_id"] == "SOL-002")
+    assert "rejected" in client.post(f"/jobs/{audit_job}/q/105376/findings/{sol_id}/reject").text
+    assert "Reopen" in client.get(f"/jobs/{audit_job}/q/105376").text
+    assert "Accept" in client.post(f"/jobs/{audit_job}/q/105376/findings/{sol_id}/reopen").text
+    assert client.post(f"/jobs/{audit_job}/q/105376/findings/nope/waive").status_code == 404
+
+
+def test_audit_all(client, audit_job):
+    require_language(Language.JAVA)
+    r = client.post(f"/jobs/{audit_job}/audit")
+    assert "hx-trigger" in r.text
+    url = r.text.split('hx-get="')[1].split('"')[0]
+    r = _wait(client, url)
+    assert "Audit finished for 2" in r.text
+    overview = client.get(f"/jobs/{audit_job}").text
+    assert "3 major" in overview  # question 2: HIDE-001, HIDE-002, HIDE-003
