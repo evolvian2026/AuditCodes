@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Question-bank audits</h1>
+{% if not network_isolated %}<p class="notice warn">Network isolation for executed code is not available on this host (<code>unshare -n</code> failed). Solutions can reach the network while being verified.</p>{% endif %}
+{% if error %}<p class="notice bad">{{ error }}</p>{% endif %}
+<form class="upload" action="/jobs" method="post" enctype="multipart/form-data">
+  <label>Upload a question-bank PDF <input type="file" name="file" accept="application/pdf" required></label>
+  <button type="submit">Extract questions</button>
+</form>
+{% if jobs %}
+<table class="jobs">
+  <thead><tr><th>Uploaded</th><th>File</th><th>Questions</th><th>Warnings</th><th></th></tr></thead>
+  <tbody>
+  {% for j in jobs %}
+    <tr>
+      <td>{{ j.created_at }}</td>
+      <td><a href="/jobs/{{ j.id }}">{{ j.filename }}</a>{% if j.title %} <span class="muted">— {{ j.title }}</span>{% endif %}</td>
+      <td>{{ j.question_count }}</td>
+      <td>{% if j.warning_count %}<span class="badge warn">{{ j.warning_count }}</span>{% else %}<span class="badge ok">0</span>{% endif %}</td>
+      <td><form action="/jobs/{{ j.id }}/delete" method="post" onsubmit="return confirm('Delete this job?')"><button class="link danger">delete</button></form></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="muted">No documents yet.</p>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,50 @@
+{% if task and not task.finished %}
+  <div class="verify running" hx-get="/jobs/{{ job.id }}/q/{{ q.id }}/verify/{{ task.id }}?language={{ language }}" hx-trigger="every 1s" hx-swap="outerHTML">
+    <span class="spinner"></span> {{ 'compiling and running' if task.status == 'running' else 'queued' }}…
+  </div>
+{% elif task and task.status == "failed" %}
+  <div class="verify"><p class="notice bad">verification crashed</p><pre>{{ task.error }}</pre></div>
+{% elif result %}
+  <div class="verify">
+    <div class="verify-summary">
+      {% if not result.build_ok %}
+        <span class="badge bad">build failed</span>
+      {% elif result.all_passed %}
+        <span class="badge ok">{{ result.passed }}/{{ result.total }} passed</span>
+      {% else %}
+        <span class="badge bad">{{ result.passed }}/{{ result.total }} passed</span>
+      {% endif %}
+      <span class="muted">max CPU {{ '%.2f' % result.max_cpu_seconds }} s{% if q.time_limit_seconds %} (limit {{ q.time_limit_seconds }} s){% endif %}</span>
+      {% if result.normalization %}<span class="muted">· normalised: {{ result.normalization }}</span>{% endif %}
+    </div>
+    {% if not result.build_ok %}
+      <pre class="log">{{ result.build_log }}</pre>
+    {% else %}
+      <table class="results">
+        <thead><tr><th>Case</th><th>Status</th><th>CPU</th><th>Detail</th></tr></thead>
+        <tbody>
+        {% for c in result.cases %}
+          <tr class="status-{{ c.status }}">
+            <td>{{ c.label }}</td>
+            <td><span class="badge {{ 'ok' if c.status == 'passed' else 'bad' }}">{{ c.status.replace('_', ' ') }}</span></td>
+            <td>{{ '%.2f' % c.cpu_seconds }} s</td>
+            <td>
+              {% if c.status != 'passed' %}
+                <details><summary>{{ c.message or 'details' }}</summary>
+                  <div class="diff">
+                    <div><h4>expected</h4><pre>{{ c.expected }}</pre></div>
+                    <div><h4>got</h4><pre>{{ c.actual }}</pre></div>
+                  </div>
+                  {% if c.stderr %}<h4>stderr</h4><pre class="log">{{ c.stderr }}</pre>{% endif %}
+                </details>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+  </div>
+{% else %}
+  <p class="muted">not verified yet</p>
+{% endif %}

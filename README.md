@@ -12,8 +12,8 @@ Supported solution languages: C, C++, Java, Python, JavaScript.
 | Phase | Scope | State |
 |---|---|---|
 | 1 | Executable core: canonical schema, sandboxed runner, language specs, generated drivers, test harness | **done** |
-| 2 | PDF ingest, segmentation, LLM structuring, extraction review UI | next |
-| 3 | Rule catalog, static audit, dynamic verification, review UI | |
+| 2 | PDF ingest (layout-aware recovery, template parser), stdio harness, extraction review web app | **done** |
+| 3 | Rule catalog, static audit, dynamic verification, findings review | next |
 | 4 | Oracle establishment, hidden-test generation, repair loop | |
 | 5 | Missing-language solution generation | |
 | 6 | PDF / DOCX / JSON / ZIP export | |
@@ -29,7 +29,44 @@ python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 The test suite compiles and runs reference solutions in all five languages; a language whose
 toolchain is missing is skipped, not failed.
 
+## Using it
+
+```bash
+.venv/bin/python -m auditcodes serve               # http://127.0.0.1:8000
+.venv/bin/python -m auditcodes extract bank.pdf -o questions.json --assets images/
+```
+
+Upload a question-bank PDF; each question is shown with every extracted component, a per-field
+extraction confidence, and the warnings the extractor raised (a wrapped code line it re-joined,
+typographic quotes inside code, a missing section...). Every field is editable in place. "Run
+editorial" compiles the reference solution and runs it against all sample and hidden tests with the
+question's time limit, in the sandbox. Jobs live under `data/jobs/<job id>/` as plain files:
+`source.pdf`, `questions.json` (the canonical model — also downloadable as Export JSON), `assets/`.
+
+The app is a local tool with no authentication; keep it on localhost or behind your own proxy.
+
+### The input format
+
+The parser targets the "Coding Ques" export: `Q.n <title> <difficulty> · Time limit`, a
+`DBNO / Area / LOD` line, then the sections *Problem Statement, Input Explanation, Output
+Explanation, Constraints, Sample Test Cases, Sample Test Case Explanation, Driver Code — <lang>,
+Editorial, Code Editorial — <lang>, Hidden Test Cases* with `Example n` / `Test Case n Level · Points`
+blocks. `DBNO` becomes the question id and is never modified. `LOD` 33/66/99 maps to easy/medium/
+hard. Figures inside sections are extracted and kept in place as Markdown images.
+
+Text is recovered from span geometry, not `get_text()`: inline code/emphasis is put back into its
+sentence, code indentation is inferred from x offsets (whole indentation levels, so a generator's
+19.3pt step does not turn into 4/8/13/17 spaces), lines that wrapped at the margin are re-joined
+only when the previous line was full, running headers/footers are dropped, and a code block that
+crosses a page break keeps its base column.
+
 ## How the core works
+
+- **`auditcodes/ingest/`** — `layout.py` rebuilds lines from PDF spans; `template.py` is the
+  deterministic parser for the export format; `normalize.py` proposes fixes for typographic
+  characters in code (the extractor itself stays faithful and only *warns*).
+- **`auditcodes/app/`** — FastAPI + Jinja + HTMX review app; `store.py` keeps one directory per
+  job, `edits.py` applies a reviewer's change to a dotted field path and re-validates the model.
 
 - **`auditcodes/models.py`** — the canonical `Question` schema. Test cases are language-agnostic
   JSON (`args`, `expected`) validated against a typed `IOSpec`; one suite drives all languages.
@@ -45,6 +82,8 @@ toolchain is missing is skipped, not failed.
   isolation when available. `Runner` is an ABC so a Docker runner can be swapped in.
 - **`auditcodes/exec/harness.py`** — build once, run every case, classify each as
   passed / failed / runtime_error / timeout / memory_limit / output_limit / bad_output.
+  `run_suite` drives a function-mode solution through its generated driver; `run_stdio_suite`
+  runs a complete program on raw stdin/stdout cases with judge-style output comparison.
 
 ### Solution conventions
 

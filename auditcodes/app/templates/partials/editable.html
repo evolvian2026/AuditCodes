@@ -1,0 +1,36 @@
+{# One editable field. Expects ctx = {path, label, kind (md|code|lines|text), raw, confidence}; optional error / saved. #}
+{% if ctx is not defined %}{% set ctx = {"path": path, "label": label, "kind": kind, "raw": raw, "confidence": confidence} %}{% endif %}
+{% set dom_id = "field-" ~ (ctx.path | replace(".", "-")) %}
+<section class="field kind-{{ ctx.kind }}" id="{{ dom_id }}">
+  <div class="field-head">
+    <h3>{{ ctx.label }}</h3>
+    {% if ctx.confidence is not none %}<span class="conf {{ ctx.confidence | conf }}" title="extraction confidence">{{ '%d' % (ctx.confidence * 100) }}%</span>{% endif %}
+    {% if saved %}<span class="saved">saved</span>{% endif %}
+    <button class="link" onclick="this.closest('.field').classList.toggle('editing')">edit</button>
+  </div>
+  {% if error %}<p class="notice bad">{{ error }}</p>{% endif %}
+  <div class="field-view">
+    {% if ctx.kind == "md" %}
+      {% if ctx.raw %}<div class="prose">{{ ctx.raw | md("/jobs/" ~ job.id ~ "/assets") | safe }}</div>{% else %}<p class="muted">— not found in the document —</p>{% endif %}
+    {% elif ctx.kind == "code" %}
+      <pre><code>{{ ctx.raw }}</code></pre>
+    {% elif ctx.kind == "lines" %}
+      {% if ctx.raw %}<ul>{% for ln in ctx.raw.split("\n") %}<li>{{ ln }}</li>{% endfor %}</ul>{% else %}<p class="muted">— none —</p>{% endif %}
+    {% else %}
+      <p>{{ ctx.raw or '—' }}</p>
+    {% endif %}
+  </div>
+  <form class="field-edit" hx-post="/jobs/{{ job.id }}/q/{{ q.id }}/edit" hx-target="#{{ dom_id }}" hx-swap="outerHTML">
+    <input type="hidden" name="path" value="{{ ctx.path }}">
+    {% if ctx.kind == "text" %}
+      <input type="text" name="value" value="{{ ctx.raw }}">
+    {% else %}
+      <textarea name="value" rows="{{ [4, (ctx.raw.count('\n') + 2)] | max }}" spellcheck="false" {% if ctx.kind != 'md' %}class="mono"{% endif %}>{{ ctx.raw }}</textarea>
+    {% endif %}
+    <div class="actions">
+      <button type="submit">Save</button>
+      <button type="button" class="link" onclick="this.closest('.field').classList.remove('editing')">cancel</button>
+      {% if ctx.kind == "md" %}<span class="muted">Markdown; a single line break is kept.</span>{% elif ctx.kind == "lines" %}<span class="muted">One constraint per line.</span>{% endif %}
+    </div>
+  </form>
+</section>

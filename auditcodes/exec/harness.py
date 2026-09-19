@@ -16,7 +16,7 @@ from typing import Any, Sequence
 from ..models import Checker, IOSpec, Language, TestCase
 from . import drivers
 from .compare import values_match
-from .languages import DEFAULT_COMPILE_LIMITS, DEFAULT_RUN_LIMITS, LanguageSpec, get_spec
+from .languages import DEFAULT_COMPILE_LIMITS, DEFAULT_RUN_LIMITS, LanguageSpec, get_spec, java_main_class, program_filename
 from .protocol import OutputDecodeError, decode_output, encode_args
 from .runner import Limits, LocalRunner, Runner, RunResult, Status
 
@@ -92,15 +92,26 @@ class SuiteResult:
         return f"{self.language.value}: {self.passed}/{len(self.cases)} passed"
 
 
-def write_workdir(language: Language, io_spec: IOSpec, solution_code: str, workdir: Path) -> None:
+def write_workdir(language: Language, io_spec: IOSpec, solution_code: str, workdir: Path) -> list[str]:
+    """Write the generated driver + solution files; returns the source file names."""
     workdir.mkdir(parents=True, exist_ok=True)
-    for name, contents in drivers.generate(language, io_spec, solution_code).items():
+    files = drivers.generate(language, io_spec, solution_code)
+    for name, contents in files.items():
         (workdir / name).write_text(contents, encoding="utf-8")
+    return list(files)
 
 
-def build(language: Language, workdir: Path, runner: Runner, limits: Limits = DEFAULT_COMPILE_LIMITS) -> BuildResult:
+def write_program(language: Language, program_code: str, workdir: Path) -> list[str]:
+    """Write a complete stdio program; returns the source file names."""
+    workdir.mkdir(parents=True, exist_ok=True)
+    name = program_filename(language, program_code)
+    (workdir / name).write_text(program_code if program_code.endswith("\n") else program_code + "\n", encoding="utf-8")
+    return [name]
+
+
+def build(language: Language, workdir: Path, runner: Runner, limits: Limits = DEFAULT_COMPILE_LIMITS, sources: list[str] | None = None) -> BuildResult:
     spec = get_spec(language)
-    cmd = spec.compile_command(limits)
+    cmd = spec.compile_command(limits, sources or [spec.program_filename])
     if cmd is None:
         return BuildResult(ok=True)
     result = runner.run(cmd, cwd=workdir, limits=spec.compile_limits(limits))
@@ -146,8 +157,8 @@ def run_suite(
     own_dir = workdir is None
     workdir = workdir or Path(tempfile.mkdtemp(prefix="auditcodes-"))
     try:
-        write_workdir(language, io_spec, solution_code, workdir)
-        build_result = build(language, workdir, runner, compile_limits)
+        sources = write_workdir(language, io_spec, solution_code, workdir)
+        build_result = build(language, workdir, runner, compile_limits, sources)
         suite = SuiteResult(language=language, build=build_result)
         if not build_result.ok:
             return suite
@@ -182,3 +193,71 @@ def _run_case(language, io_spec, workdir, index, case: TestCase, runner, limits,
     if values_match(case.expected, actual, io_spec.return_spec, checker):
         return CaseResult(status=CaseStatus.PASSED, actual=actual, **common)
     return CaseResult(status=CaseStatus.FAILED, actual=actual, message="wrong answer", **common)
+
+
+# --- stdio mode ------------------------------------------------------------------------------
+
+
+def outputs_equal_text(expected: str, actual: str) -> bool:
+    """Judge-style comparison: trailing whitespace on each line and trailing blank lines ignored."""
+    return _norm_text(expected) == _norm_text(actual)
+
+
+def _norm_text(text: str) -> list[str]:
+    lines = [ln.rstrip() for ln in text.replace("\r\n", "\n").split("\n")]
+    while lines and not lines[-1]:
+        lines.pop()
+    return lines
+
+
+def run_stdio_suite(
+    language: Language,
+    program_code: str,
+    cases: Sequence[TestCase],
+    *,
+    runner: Runner | None = None,
+    limits: Limits = DEFAULT_RUN_LIMITS,
+    compile_limits: Limits = DEFAULT_COMPILE_LIMITS,
+    stop_on_failure: bool = False,
+    workdir: Path | None = None,
+) -> SuiteResult:
+    """Build a complete program and run it on raw stdin/stdout test cases."""
+    runner = runner or LocalRunner()
+    own_dir = workdir is None
+    workdir = workdir or Path(tempfile.mkdtemp(prefix="auditcodes-"))
+    spec = get_spec(language)
+    main_class = java_main_class(program_code) if language is Language.JAVA else "Main"
+    try:
+        sources = write_program(language, program_code, workdir)
+        build_result = build(language, workdir, runner, compile_limits, sources)
+        suite = SuiteResult(language=language, build=build_result)
+        if not build_result.ok:
+            return suite
+        for i, case in enumerate(cases):
+            stdin = (case.stdin or "")
+            if stdin and not stdin.endswith("\n"):
+                stdin += "\n"
+            result = runner.run(spec.run_command(limits, main_class), cwd=workdir, stdin=stdin.encode("utf-8"), limits=spec.run_limits(limits))
+            common = dict(
+                index=i,
+                expected=case.stdout,
+                stdout=result.stdout_text(_EXCERPT),
+                stderr=result.stderr_text(_EXCERPT),
+                wall_seconds=result.wall_seconds,
+                cpu_seconds=result.cpu_seconds,
+                max_rss_bytes=result.max_rss_bytes,
+            )
+            actual = result.stdout.decode("utf-8", errors="replace")
+            if not result.ok:
+                cr = CaseResult(status=_STATUS_MAP[result.status], message=result.reason, actual=actual, **common)
+            elif case.stdout is None or outputs_equal_text(case.stdout, actual):
+                cr = CaseResult(status=CaseStatus.PASSED, actual=actual, **common)
+            else:
+                cr = CaseResult(status=CaseStatus.FAILED, actual=actual, message="wrong answer", **common)
+            suite.cases.append(cr)
+            if stop_on_failure and not cr.passed:
+                break
+        return suite
+    finally:
+        if own_dir:
+            shutil.rmtree(workdir, ignore_errors=True)

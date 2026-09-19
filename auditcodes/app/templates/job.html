@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}{{ job.filename }} · AuditCodes{% endblock %}
+{% block nav %}<a href="/jobs/{{ job.id }}/export.json">Export JSON</a> · <a href="/jobs/{{ job.id }}/source.pdf">Source PDF</a>{% endblock %}
+{% block content %}
+<h1>{{ job.filename }} <span class="muted">{{ job.question_count }} question{{ '' if job.question_count == 1 else 's' }}</span></h1>
+{% if job.document_warnings %}
+<div class="notice warn"><strong>Document warnings</strong><ul>{% for w in job.document_warnings %}<li>{{ w }}</li>{% endfor %}</ul></div>
+{% endif %}
+<table class="questions">
+  <thead><tr><th>#</th><th>DBNO</th><th>Title</th><th>Area</th><th>Difficulty</th><th>Samples</th><th>Hidden</th><th>Code</th><th>Extraction</th><th>Warnings</th></tr></thead>
+  <tbody>
+  {% for r in rows %}{% set q = r.q %}
+    <tr>
+      <td>{{ q.number or loop.index }}</td>
+      <td><code>{{ q.id }}</code></td>
+      <td><a href="/jobs/{{ job.id }}/q/{{ q.id }}">{{ q.title }}</a></td>
+      <td>{{ q.area or '' }}</td>
+      <td>{% if q.difficulty %}<span class="badge diff-{{ q.difficulty.value }}">{{ q.difficulty.value }}</span>{% endif %}{% if q.lod %} <span class="muted">LOD {{ q.lod }}</span>{% endif %}</td>
+      <td>{{ q.samples | length }}</td>
+      <td>{{ q.hidden_tests | length }}</td>
+      <td>{{ r.languages | join(', ') }}</td>
+      <td><span class="conf {{ r.min_conf | conf }}">{% if r.min_conf is not none %}{{ '%d' % (r.min_conf * 100) }}%{% else %}—{% endif %}</span></td>
+      <td>{% if q.provenance.warnings %}<span class="badge warn">{{ q.provenance.warnings | length }}</span>{% else %}<span class="badge ok">0</span>{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+<p class="muted">Extraction confidence is the lowest per-field confidence for the question; anything below 95% deserves a look.</p>
+{% endblock %}

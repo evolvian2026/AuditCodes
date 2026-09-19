@@ -31,6 +31,18 @@ class Difficulty(str, Enum):
     HARD = "hard"
 
 
+class IOMode(str, Enum):
+    """How a solution is exercised.
+
+    ``stdio``: the solution is a complete program; tests are raw stdin/stdout text.
+    ``function``: the solution implements ``IOSpec``; tests are typed JSON args/expected and the
+    driver is generated.
+    """
+
+    STDIO = "stdio"
+    FUNCTION = "function"
+
+
 class Checker(str, Enum):
     """How a solution's output is compared with the expected value."""
 
@@ -41,6 +53,8 @@ class Checker(str, Enum):
 
 
 class TestCategory(str, Enum):
+    __test__ = False
+
     SAMPLE = "sample"
     ORIGINAL = "original"  # hidden test carried over from the source document
     BOUNDARY_MIN = "boundary_min"
@@ -53,6 +67,8 @@ class TestCategory(str, Enum):
 
 
 class TestOrigin(str, Enum):
+    __test__ = False
+
     SOURCE = "source"  # extracted from the uploaded document
     GENERATED = "generated"  # produced by the test generator from the verified oracle
     MANUAL = "manual"  # entered by a reviewer
@@ -127,8 +143,14 @@ class Constraint(BaseModel):
 class TestCase(BaseModel):
     __test__ = False  # keep pytest from collecting this as a test class
 
-    args: list[Any]
+    # function mode
+    args: list[Any] | None = None
     expected: Any = None
+    # stdio mode
+    stdin: str | None = None
+    stdout: str | None = None
+    label: str | None = None  # e.g. "Test Case 3" as printed in the source
+    points: int | None = None
     explanation: str | None = None
     category: TestCategory = TestCategory.ORIGINAL
     difficulty: Difficulty | None = None
@@ -137,7 +159,14 @@ class TestCase(BaseModel):
 
 class Provenance(BaseModel):
     pages: list[int] = Field(default_factory=list)
-    confidence: dict[str, float] = Field(default_factory=dict)
+    confidence: dict[str, float] = Field(default_factory=dict)  # field name -> 0..1
+    warnings: list[str] = Field(default_factory=list)
+
+
+class ImageAsset(BaseModel):
+    path: str  # relative to the job's assets directory
+    page: int
+    section: str
 
 
 def validate_case(io_spec: IOSpec, case: TestCase, where: str = "case") -> TestCase:
@@ -145,6 +174,8 @@ def validate_case(io_spec: IOSpec, case: TestCase, where: str = "case") -> TestC
 
     Raises ``ValueTypeError`` describing exactly which argument is wrong.
     """
+    if case.args is None:
+        raise ValueTypeError(f"{where}: function-mode test case has no args")
     if len(case.args) != len(io_spec.params):
         raise ValueTypeError(
             f"{where}: expected {len(io_spec.params)} argument(s) for {io_spec.function_name}, got {len(case.args)}"
@@ -157,24 +188,43 @@ def validate_case(io_spec: IOSpec, case: TestCase, where: str = "case") -> TestC
 
 
 class Question(BaseModel):
-    id: str
+    id: str  # the source's question id (DBNO); never modified by the audit
+    number: int | None = None  # ordinal in the source document (Q.1, Q.2 ...)
     title: str
+    io_mode: IOMode = IOMode.FUNCTION
     description_md: str
+    input_format_md: str | None = None
+    output_format_md: str | None = None
     constraints: list[Constraint] = Field(default_factory=list)
-    io_spec: IOSpec
+    io_spec: IOSpec | None = None
     samples: list[TestCase] = Field(default_factory=list)
+    sample_explanation_md: str | None = None
     hidden_tests: list[TestCase] = Field(default_factory=list)
     drivers: dict[Language, str] = Field(default_factory=dict)
+    editorial_md: str | None = None
     solutions: dict[Language, str] = Field(default_factory=dict)
     difficulty: Difficulty | None = None
+    lod: int | None = None  # source's level-of-difficulty number (33 / 66 / 99)
+    area: str | None = None
+    time_limit_seconds: float | None = None
     tags: list[str] = Field(default_factory=list)
     checker: Checker = Checker.EXACT
+    images: list[ImageAsset] = Field(default_factory=list)
+    metadata: dict[str, str] = Field(default_factory=dict)
     provenance: Provenance = Field(default_factory=Provenance)
 
     @model_validator(mode="after")
-    def _cases_match_spec(self) -> "Question":
-        self.samples = [validate_case(self.io_spec, c, f"samples[{i}]") for i, c in enumerate(self.samples)]
-        self.hidden_tests = [validate_case(self.io_spec, c, f"hidden_tests[{i}]") for i, c in enumerate(self.hidden_tests)]
+    def _cases_match_mode(self) -> "Question":
+        if self.io_mode is IOMode.FUNCTION:
+            if self.io_spec is None:
+                raise ValueError("function-mode questions need an io_spec")
+            self.samples = [validate_case(self.io_spec, c, f"samples[{i}]") for i, c in enumerate(self.samples)]
+            self.hidden_tests = [validate_case(self.io_spec, c, f"hidden_tests[{i}]") for i, c in enumerate(self.hidden_tests)]
+        else:
+            for where, cases in (("samples", self.samples), ("hidden_tests", self.hidden_tests)):
+                for i, c in enumerate(cases):
+                    if c.stdin is None or c.stdout is None:
+                        raise ValueError(f"{where}[{i}]: stdio test case needs both stdin and stdout")
         return self
 
     @property

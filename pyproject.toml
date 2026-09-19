@@ -9,16 +9,26 @@ description = "Audit coding questions: verify, correct and export question banks
 requires-python = ">=3.11"
 dependencies = [
     "pydantic>=2.5",
+    "pymupdf>=1.24",
+    "fastapi>=0.110",
+    "uvicorn>=0.27",
+    "jinja2>=3.1",
+    "python-multipart>=0.0.9",
+    "markdown-it-py>=3.0",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8",
     "hypothesis>=6",
+    "httpx>=0.27",
 ]
 
 [tool.setuptools.packages.find]
 include = ["auditcodes*"]
+
+[tool.setuptools.package-data]
+auditcodes = ["app/templates/*.html", "app/templates/partials/*.html", "app/static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

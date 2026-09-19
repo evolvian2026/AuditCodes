@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}{{ q.title }} · AuditCodes{% endblock %}
+{% block nav %}
+  <a href="/jobs/{{ job.id }}">← {{ job.filename }}</a>
+  {% if prev_id %}· <a href="/jobs/{{ job.id }}/q/{{ prev_id }}">prev</a>{% endif %}
+  · <span class="muted">{{ position[0] }} / {{ position[1] }}</span>
+  {% if next_id %}· <a href="/jobs/{{ job.id }}/q/{{ next_id }}">next</a>{% endif %}
+{% endblock %}
+{% block content %}
+<div class="qhead">
+  <h1>Q.{{ q.number }} {{ q.title }}</h1>
+  <div class="badges">
+    <span class="badge id">DBNO {{ q.id }}</span>
+    {% if q.difficulty %}<span class="badge diff-{{ q.difficulty.value }}">{{ q.difficulty.value }}</span>{% endif %}
+    {% if q.lod %}<span class="badge">LOD {{ q.lod }}</span>{% endif %}
+    {% if q.area %}<span class="badge">{{ q.area }}</span>{% endif %}
+    {% if q.time_limit_seconds %}<span class="badge">time limit {{ q.time_limit_seconds }} s</span>{% endif %}
+    <span class="badge">pages {{ q.provenance.pages | join(', ') }}</span>
+    <span class="badge">{{ q.io_mode.value }}</span>
+  </div>
+</div>
+
+{% if q.provenance.warnings %}
+<div class="notice warn">
+  <strong>Extraction warnings</strong>
+  <ul>{% for w in q.provenance.warnings %}<li>{{ w }}</li>{% endfor %}</ul>
+</div>
+{% endif %}
+
+<section class="meta-grid">
+  {% for path in ["title", "area", "time_limit_seconds"] %}
+    {% with ctx = {"path": path, "label": path.replace("_", " "), "kind": "text", "raw": (q[path] if q[path] is not none else "") | string, "confidence": none} %}
+      {% include "partials/editable.html" %}
+    {% endwith %}
+  {% endfor %}
+</section>
+
+{% for ctx in sections %}
+  {% include "partials/editable.html" %}
+{% endfor %}
+
+<h2>Sample test cases <span class="muted">({{ q.samples | length }})</span> <span class="conf {{ q.provenance.confidence.get('samples') | conf }}">{{ '%d' % ((q.provenance.confidence.get('samples') or 0) * 100) }}%</span></h2>
+{% for case in q.samples %}
+<div class="case">
+  <div class="case-head"><strong>{{ case.label or ("Example " ~ loop.index) }}</strong></div>
+  <div class="case-body">
+    {% with ctx = {"path": "samples." ~ loop.index0 ~ ".stdin", "label": "Input", "kind": "code", "raw": case.stdin, "confidence": none} %}{% include "partials/editable.html" %}{% endwith %}
+    {% with ctx = {"path": "samples." ~ loop.index0 ~ ".stdout", "label": "Output", "kind": "code", "raw": case.stdout, "confidence": none} %}{% include "partials/editable.html" %}{% endwith %}
+  </div>
+</div>
+{% endfor %}
+
+{% for lang, code in q.drivers.items() %}
+  {% with ctx = {"path": "drivers." ~ lang.value, "label": "Driver Code — " ~ lang.value, "kind": "code", "raw": code, "confidence": q.provenance.confidence.get("driver")} %}{% include "partials/editable.html" %}{% endwith %}
+{% endfor %}
+
+{% for lang, code in q.solutions.items() %}
+  {% with ctx = {"path": "solutions." ~ lang.value, "label": "Code Editorial — " ~ lang.value, "kind": "code", "raw": code, "confidence": q.provenance.confidence.get("solution")} %}{% include "partials/editable.html" %}{% endwith %}
+  <div class="verify-box">
+    <form hx-post="/jobs/{{ job.id }}/q/{{ q.id }}/verify" hx-target="#verify-{{ lang.value }}" hx-swap="innerHTML">
+      <input type="hidden" name="language" value="{{ lang.value }}">
+      <label><input type="checkbox" name="normalize" value="1" checked> normalise typographic quotes/dashes before compiling</label>
+      <button type="submit">Run editorial against all {{ (q.samples | length) + (q.hidden_tests | length) }} test cases</button>
+    </form>
+    <div id="verify-{{ lang.value }}">
+      {% with task = none, result = verifications.get(lang.value), language = lang.value %}{% include "partials/verify.html" %}{% endwith %}
+    </div>
+  </div>
+{% endfor %}
+
+<h2>Hidden test cases <span class="muted">({{ q.hidden_tests | length }})</span> <span class="conf {{ q.provenance.confidence.get('hidden') | conf }}">{{ '%d' % ((q.provenance.confidence.get('hidden') or 0) * 100) }}%</span></h2>
+{% for case in q.hidden_tests %}
+<div class="case">
+  <div class="case-head"><strong>{{ case.label or ("Test Case " ~ loop.index) }}</strong>
+    {% if case.difficulty %}<span class="badge diff-{{ case.difficulty.value }}">{{ case.difficulty.value }}</span>{% endif %}
+    {% if case.points is not none %}<span class="badge">{{ case.points }} pts</span>{% endif %}
+  </div>
+  <div class="case-body">
+    {% with ctx = {"path": "hidden_tests." ~ loop.index0 ~ ".stdin", "label": "Input", "kind": "code", "raw": case.stdin, "confidence": none} %}{% include "partials/editable.html" %}{% endwith %}
+    {% with ctx = {"path": "hidden_tests." ~ loop.index0 ~ ".stdout", "label": "Output", "kind": "code", "raw": case.stdout, "confidence": none} %}{% include "partials/editable.html" %}{% endwith %}
+  </div>
+</div>
+{% endfor %}
+{% endblock %}
