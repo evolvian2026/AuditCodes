@@ -125,6 +125,17 @@ _RULES: list[Rule] = [
     # --- metadata ------------------------------------------------------------------------------
     Rule("META-001", "metadata", "Time limit missing", Severity.MINOR, "dynamic", "The question has no time limit."),
     Rule("META-002", "metadata", "Area missing", Severity.INFO, "dynamic", "The question has no subject area."),
+    # --- generation ----------------------------------------------------------------------------
+    Rule("GEN-001", "generation", "Independent solution added", Severity.INFO, "dynamic",
+         "A solution in another language was written from the statement alone and passes every existing test; it is the second implementation the oracle needs and can be kept as an additional reference solution."),
+    Rule("GEN-002", "generation", "Hidden tests generated", Severity.INFO, "dynamic",
+         "New hidden tests were generated: inputs from a generator program, validated against the constraints, with expected outputs on which two independent implementations agree."),
+    Rule("GEN-003", "generation", "Oracle not established", Severity.MAJOR, "dynamic",
+         "No second implementation agreeing with the editorial on every existing test could be obtained, so expected outputs for new tests cannot be trusted and none were generated."),
+    Rule("GEN-004", "generation", "Implementations disagree on a generated input", Severity.MAJOR, "dynamic",
+         "The editorial and the independent solution give different outputs for an input that satisfies the constraints; one of them is wrong on inputs outside the existing tests."),
+    Rule("GEN-005", "generation", "Generation skipped", Severity.INFO, "dynamic",
+         "Hidden-test generation did not run: the editorial fails existing tests, no model is configured, or the generator program did not work."),
     # --- tooling -------------------------------------------------------------------------------
     Rule("VAL-001", "tooling", "Input validator could not be established", Severity.INFO, "dynamic",
          "The generated input validator rejected every sample or crashed, so constraint checks were skipped."),

@@ -10,7 +10,7 @@ from typing import Any
 
 from ..edits import EditError, apply_edit
 from ..fields import field_ctx
-from ..models import Question
+from ..models import Question, TestCase
 from .report import Finding, Patch
 
 _ALLOWED_SET = re.compile(
@@ -38,7 +38,26 @@ def current_value(question: Question, path: str) -> str | None:
         return None
 
 
+def normalized_input(text: str | None) -> str:
+    return "\n".join(ln.rstrip() for ln in (text or "").replace("\r\n", "\n").strip("\n").split("\n"))
+
+
 def apply_patch(question: Question, patch: Patch) -> Question:
+    if patch.op == "append":
+        if patch.path != "hidden_tests":
+            raise PatchError(f"patches can only append to hidden_tests, not {patch.path!r}")
+        if not patch.items:
+            raise PatchError("append patch has no items")
+        existing = {normalized_input(t.stdin) for t in question.hidden_tests} | {normalized_input(t.stdin) for t in question.samples}
+        added = list(question.hidden_tests)
+        for item in patch.items:
+            case = TestCase.model_validate(item)
+            key = normalized_input(case.stdin)
+            if key in existing:
+                continue
+            existing.add(key)
+            added.append(case)
+        return question.model_copy(update={"hidden_tests": added})
     if patch.op == "set":
         if not _ALLOWED_SET.match(patch.path):
             raise PatchError(f"patches cannot set {patch.path!r}")
@@ -81,3 +100,24 @@ def unified_diff(old: str | None, new: str | None, path: str) -> str:
     a = (old or "").splitlines()
     b = (new or "").splitlines()
     return "\n".join(difflib.unified_diff(a, b, fromfile=f"{path} (current)", tofile=f"{path} (proposed)", lineterm="", n=2))
+
+
+def apply_all(question: Question, findings: list[Finding]) -> tuple[Question, list[Finding], list[tuple[Finding, str]]]:
+    """Apply the patches of ``findings`` in a safe order (sets, then removals, then appends).
+
+    Returns the patched question, the findings applied, and (finding, reason) for the ones skipped.
+    """
+    order = {"set": 0, "remove": 1, "append": 2}
+    applied: list[Finding] = []
+    skipped: list[tuple[Finding, str]] = []
+    for f in sorted(findings, key=lambda f: order[f.patch.op]):
+        try:
+            question = apply_patch(question, f.patch)
+        except PatchError as e:
+            skipped.append((f, str(e)))
+            continue
+        applied.append(f)
+        if f.patch.op == "remove":
+            group, idx = f.patch.path.rsplit(".", 1)
+            shift_indices_after_removal([x for x in findings if x is not f], group, int(idx))
+    return question, applied, skipped

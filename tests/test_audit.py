@@ -243,11 +243,199 @@ def test_llm_failure_does_not_lose_execution_findings(questions, runner):
     llm = MockLLM(responses={"validator": boom, "splice": boom, "static_audit": boom})
     r = run_audit(questions[1], runner=runner, llm=llm)
     assert r.status == "done"
-    assert {f.rule_id for f in r.findings} == {"HIDE-001", "HIDE-002", "HIDE-003"}
+    assert {f.rule_id for f in r.findings} == {"HIDE-001", "HIDE-002", "HIDE-003", "GEN-005"}
     assert "static audit failed" in (r.error or "")
-    assert not r.validator["established"]
+    assert not r.validator["established"] and not r.oracle["established"]
+    assert "could be obtained" in _by_rule(r, "GEN-005")[0].message
 
 
 def test_report_roundtrip(q1_report):
     data = q1_report.model_dump_json()
     assert AuditReport.model_validate_json(data) == q1_report
+
+
+# --- phase 4: oracle, generation, projection ------------------------------------------------
+
+from auditcodes.audit.patches import apply_all, normalized_input  # noqa: E402
+from auditcodes.audit.testgen import allocate, target_count  # noqa: E402
+from auditcodes.llm.prompts import GeneratorProgram, SolutionProgram  # noqa: E402
+from auditcodes.models import Difficulty, TestCase, TestCategory, TestOrigin  # noqa: E402
+
+PY_SOLUTION_Q1 = """import sys
+s = list(sys.stdin.read().split()[0])
+n = len(s)
+for i in range(n):
+    if s[i] == '?':
+        prev_a = i > 0 and s[i - 1] == 'a'
+        next_a = i + 1 < n and s[i + 1] == 'a'
+        s[i] = 'b' if (prev_a or next_a) else 'a'
+print(''.join(s))
+"""
+
+WRONG_PY_SOLUTION_Q1 = "import sys\nprint(sys.stdin.read().split()[0].replace('?', 'b'))\n"
+
+GENERATOR_Q1 = """import random, sys
+cat, seed = sys.argv[1], int(sys.argv[2])
+random.seed(seed)
+def valid_word(n):
+    w = []
+    for i in range(n):
+        w.append('b' if (w and w[-1] == 'a') else random.choice('ab'))
+    return w
+if cat == 'boundary_min':
+    n = 1
+elif cat == 'boundary_max':
+    n = 50
+elif cat == 'random_small':
+    n = random.randint(1, 10)
+elif cat == 'random_large':
+    n = random.randint(25, 50)
+else:
+    n = random.randint(2, 50)
+w = valid_word(n)
+if cat == 'edge':
+    mask = [True] * n if seed % 2 else [False] * n
+elif cat == 'adversarial':
+    mask = [i % 2 == 0 for i in range(n)]
+elif cat == 'structured':
+    mask = [(i % 3) != 1 for i in range(n)]
+else:
+    mask = [random.random() < 0.5 for _ in range(n)]
+print(''.join('?' if m else c for c, m in zip(w, mask)))
+"""
+
+
+def _phase4_mock(q, solution=PY_SOLUTION_Q1, generator=GENERATOR_Q1):
+    llm = _mock_for_q1(q)
+
+    def independent(system, user):
+        assert "solutions.java" not in user and "StringBuilder" not in user  # the editorial is never shown
+        if "Python 3" in user:
+            return SolutionProgram(code=solution, approach="Greedy left to right; O(n).")
+        return SolutionProgram(code="this is not valid code in any language", approach="n/a")
+
+    llm.responses["independent_solution"] = independent
+    llm.responses["generator"] = GeneratorProgram(python_code=generator, notes="masks a valid word")
+    return llm
+
+
+def test_allocation_and_targets(questions):
+    assert target_count(questions[0]) == 15 and target_count(questions[1]) == 40
+    assert sum(allocate(31).values()) == 31 and len(allocate(31)) == 7
+    assert sum(allocate(6).values()) == 6 and allocate(0) == {}
+    assert all(v >= 1 for v in allocate(7).values()) and len(allocate(7)) == 7
+
+
+def test_oracle_and_generation_q1(questions, runner):
+    require_language(Language.JAVA)
+    q = questions[0]
+    llm = _phase4_mock(q)
+    r = run_audit(q, runner=runner, llm=llm)
+    assert r.status == "done", r.error
+    tasks = [c.task for c in llm.calls]
+    # C++ is preferred first, fails twice (garbage code), then Python succeeds on the first attempt
+    assert tasks.count("independent_solution") == 3 and tasks[-1] == "generator"
+    assert r.oracle["established"] and r.oracle["primary"] == "java" and r.oracle["secondary"] == "python"
+    (gen1,) = _by_rule(r, "GEN-001")
+    assert gen1.patch.path == "solutions.python" and gen1.patch.verified and gen1.patch.new_value == PY_SOLUTION_Q1
+    # 10 hidden tests, one duplicate -> 9 unique; easy target 15 -> 6 generated
+    assert r.generation["target"] == 15 and r.generation["existing_unique"] == 9 and r.generation["needed"] == 6
+    assert r.generation["generated"] == 6 and r.generation["disagreements"] == 0 and r.generation["too_slow"] == 0
+    assert not _by_rule(r, "HIDE-003") and not _by_rule(r, "GEN-004") and not _by_rule(r, "GEN-003")
+    (gen2,) = _by_rule(r, "GEN-002")
+    items = [TestCase.model_validate(i) for i in gen2.patch.items]
+    assert len(items) == 6 and gen2.patch.op == "append" and gen2.patch.verified
+    assert {i.category for i in items} >= {TestCategory.BOUNDARY_MIN, TestCategory.BOUNDARY_MAX, TestCategory.EDGE}
+    assert all(i.origin is TestOrigin.GENERATED and i.stdout and set(i.stdout.strip()) <= set("ab") for i in items)
+    assert [i.label for i in items] == [f"Test Case {n}" for n in range(11, 17)]
+    # points follow the question's own scheme (5/10/15 by level)
+    assert all(i.points == {Difficulty.EASY: 5, Difficulty.MEDIUM: 10, Difficulty.HARD: 15}[i.difficulty] for i in items)
+    existing = {normalized_input(t.stdin) for t in q.samples + q.hidden_tests}
+    assert not any(normalized_input(i.stdin) in existing for i in items)
+    # every generated input is a valid instance: length <= 50, alphabet ab?, and the expected output has no 'aa'
+    for i in items:
+        s = i.stdin.strip()
+        assert 1 <= len(s) <= 50 and set(s) <= set("ab?") and "aa" not in i.stdout
+    # the projection applies SOL-002, the duplicate removal, GEN-001 and the generated tests
+    assert r.projection["remaining_execution"]["blocker"] == 0 and r.projection["remaining_execution"]["major"] == 0
+    assert r.projection["hidden_tests"] == 15 and r.projection["solutions"] == ["java", "python"]
+    assert set(r.projection["applied"]) == {"SOL-002", "HIDE-001", "GEN-001", "GEN-002"}
+    assert r.projection["verifications"]["java"]["all_passed"] and r.projection["verifications"]["java"]["total"] == 18
+    assert r.projection["verifications"]["python"]["all_passed"]
+
+
+def test_disagreeing_independent_solution_blocks_generation(questions, runner):
+    require_language(Language.JAVA)
+    q = questions[0]
+    llm = _phase4_mock(q, solution=WRONG_PY_SOLUTION_Q1)
+    r = run_audit(q, runner=runner, llm=llm)
+    assert not r.oracle["established"]
+    (f,) = _by_rule(r, "GEN-003")
+    assert f.severity is Severity.MAJOR and "expected" in f.evidence and "python attempt 2" in f.evidence
+    assert r.generation is None and not _by_rule(r, "GEN-002") and not _by_rule(r, "GEN-001")
+    assert "generator" not in [c.task for c in llm.calls]
+
+
+def test_generation_reports_disagreement_on_new_inputs(questions, runner):
+    """A second implementation that agrees on the existing tests but not on all inputs."""
+    require_language(Language.JAVA)
+    q = questions[0]
+    # correct except when the answer is 'abab', which no existing test produces
+    tricky = PY_SOLUTION_Q1.replace("print(''.join(s))", "print('bbbb' if ''.join(s) == 'abab' else ''.join(s))")
+    gen = GENERATOR_Q1.replace("n = random.randint(2, 50)", "n = 4")  # edge with an odd seed -> '????' -> 'abab'
+    llm = _phase4_mock(q, solution=tricky, generator=gen)
+    r = run_audit(q, runner=runner, llm=llm)
+    assert r.oracle["established"], r.oracle
+    (f,) = _by_rule(r, "GEN-004")
+    assert "abab" in f.evidence and "bbbb" in f.evidence and f.severity is Severity.MAJOR
+    assert r.generation["disagreements"] >= 1
+    accepted = _by_rule(r, "GEN-002")
+    assert not accepted or all(i["stdin"].strip() != "????" for i in accepted[0].patch.items)  # the disputed input is never added
+
+
+def test_generation_skipped_when_editorial_fails(questions, runner):
+    q = questions[0].model_copy(deep=True)
+    q.hidden_tests[0].stdout = "wrong\n"
+    llm = _phase4_mock(q)
+    r = run_audit(q, runner=runner, llm=llm)
+    assert not r.oracle["established"] and _by_rule(r, "GEN-005")
+    assert "independent_solution" not in [c.task for c in llm.calls]
+
+
+def test_generation_when_target_already_met(questions, runner):
+    q = questions[0].model_copy(deep=True)
+    q.hidden_tests = q.hidden_tests[:9] + [TestCase(stdin=f"{'?' * k}\n", stdout="x\n") for k in range(3, 10)]  # 16 unique
+    llm = _phase4_mock(q)
+    llm.responses["independent_solution"] = SolutionProgram(code=PY_SOLUTION_Q1, approach="")
+    r = run_audit(q, runner=runner, llm=llm)
+    # the editorial fails the fake tests, so the oracle is refused before anything is generated
+    assert not r.oracle["established"]
+
+
+def test_broken_generator_program(questions, runner):
+    require_language(Language.JAVA)
+    q = questions[0]
+    llm = _phase4_mock(q, generator="import sys\nsys.exit(3)\n")
+    r = run_audit(q, runner=runner, llm=llm)
+    assert r.oracle["established"]
+    assert [c.task for c in llm.calls].count("generator") == 2  # retried once with the failure shown
+    assert r.generation["generated"] == 0 and any("did not run" in f.message for f in _by_rule(r, "GEN-005"))
+
+
+def test_apply_append_and_apply_all(questions):
+    q = questions[0]
+    items = [TestCase(stdin="?a\n", stdout="ba\n", origin=TestOrigin.GENERATED).model_dump(mode="json"),
+             TestCase(stdin=q.hidden_tests[0].stdin, stdout="dup\n").model_dump(mode="json")]
+    q2 = apply_patch(q, Patch(op="append", path="hidden_tests", items=items))
+    assert len(q2.hidden_tests) == 11 and q2.hidden_tests[-1].stdin == "?a\n"  # duplicate of an existing input skipped
+    with pytest.raises(PatchError):
+        apply_patch(q, Patch(op="append", path="samples", items=items))
+    fs = [
+        Finding(rule_id="HIDE-001", severity=Severity.MAJOR, source=FindingSource.DYNAMIC, component="hidden_tests.9", title="t", message="m", patch=Patch(op="remove", path="hidden_tests.9", item_fingerprint=fingerprint(q.hidden_tests[9]))),
+        Finding(rule_id="GEN-002", severity=Severity.INFO, source=FindingSource.DYNAMIC, component="hidden_tests", title="t", message="m", patch=Patch(op="append", path="hidden_tests", items=items[:1])),
+        Finding(rule_id="X", severity=Severity.INFO, source=FindingSource.DYNAMIC, component="title", title="t", message="m", patch=Patch(path="title", new_value="New")),
+        Finding(rule_id="Y", severity=Severity.INFO, source=FindingSource.DYNAMIC, component="hidden_tests.0", title="t", message="m", patch=Patch(op="remove", path="hidden_tests.0", item_fingerprint="gone")),
+    ]
+    patched, applied, skipped = apply_all(q, fs)
+    assert patched.title == "New" and len(patched.hidden_tests) == 10  # -1 duplicate +1 generated
+    assert [f.rule_id for f in applied] == ["X", "HIDE-001", "GEN-002"] and skipped[0][0].rule_id == "Y"

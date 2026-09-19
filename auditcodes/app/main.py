@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from ..audit import run_audit
-from ..audit.patches import PatchError, apply_patch, shift_indices_after_removal, unified_diff
+from ..audit.patches import PatchError, apply_all, apply_patch, shift_indices_after_removal, unified_diff
 from ..audit.report import AuditReport, FindingStatus
 from ..audit.rules import get_rule
 from ..exec.harness import SuiteResult, run_stdio_suite
@@ -250,6 +250,29 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
             raise HTTPException(404, "task not found")
         return page(request, "partials/audit_all.html", job=meta, task=task)
 
+    @app.post("/jobs/{job_id}/q/{qid}/findings/accept-verified", response_class=HTMLResponse)
+    def accept_verified(request: Request, job_id: str, qid: str):
+        meta = get_job(job_id)
+        q = get_question(job_id, qid)
+        report = store.load_report(job_id, qid)
+        if report is None:
+            raise HTTPException(404, "no audit report")
+        auto = report.auto_applicable
+        updated, applied, skipped = apply_all(q, auto)
+        for f in applied:
+            f.status, f.applied = FindingStatus.ACCEPTED, True
+        for f, reason in skipped:
+            f.resolution_note = f"could not apply: {reason}"
+        if applied:
+            store.update_question(job_id, updated)
+        report.projection = None  # stale once patches are applied; a re-run recomputes it
+        store.save_report(job_id, report)
+        resp = page(request, "partials/audit.html", job=meta, q=updated, task=None, report=report,
+                    error=("; ".join(f"{f.rule_id}: {reason}" for f, reason in skipped) or None))
+        if applied:
+            resp.headers["HX-Refresh"] = "true"
+        return resp
+
     @app.post("/jobs/{job_id}/q/{qid}/findings/{fid}/{action}", response_class=HTMLResponse)
     def finding_action(request: Request, job_id: str, qid: str, fid: str, action: str):
         meta = get_job(job_id)
@@ -271,6 +294,7 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
                     store.update_question(job_id, updated)
                     q = updated
                     f.status, f.applied = FindingStatus.ACCEPTED, True
+                    report.projection = None
                 except PatchError as e:
                     error = str(e)
         elif action == "reject":

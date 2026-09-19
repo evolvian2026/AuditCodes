@@ -23,3 +23,5 @@
   system prompt) and are tested with `MockLLM`; keep prompts in `auditcodes/llm/prompts.py`.
 - Field paths (`solutions.java`, `hidden_tests.3.stdout`, ...) are the shared addressing scheme
   for edits, patches and findings; `auditcodes/edits.py` and `auditcodes/fields.py` own them.
+- Expected outputs for generated tests come only from two independent implementations agreeing
+  (`audit/oracle.py`, `audit/testgen.py`); never let the model author an expected output directly.

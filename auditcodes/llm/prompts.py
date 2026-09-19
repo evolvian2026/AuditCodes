@@ -52,6 +52,16 @@ class SplicedProgram(BaseModel):
     issues: list[str] = Field(description="Mismatches noticed between the driver scaffold and the editorial (signature, types, imports); empty if none")
 
 
+class SolutionProgram(BaseModel):
+    code: str = Field(description="A complete program in the requested language that reads stdin and writes stdout exactly as the problem specifies")
+    approach: str = Field(description="One paragraph: the algorithm and its complexity")
+
+
+class GeneratorProgram(BaseModel):
+    python_code: str = Field(description="Complete Python 3 program; usage: python gen.py <category> <seed>; prints one complete test input")
+    notes: str
+
+
 # --- system prompts (stable, cached) ---------------------------------------------------------
 
 STATIC_AUDIT_SYSTEM = f"""You audit competitive-programming / coding-assessment questions for a question bank.
@@ -96,6 +106,36 @@ Rules:
 - Take the logic from the reference solution; do not invent a new algorithm. Add helper methods/functions if the reference uses them.
 - If the scaffold's function signature does not match how the reference solution is structured (different parameters, types or return type), implement the scaffold's signature anyway and list the mismatch in 'issues'.
 - Output the complete program in 'code'. List anything a question author should fix in the scaffold in 'issues'.
+"""
+
+INDEPENDENT_SOLUTION_SYSTEM = """You solve competitive-programming problems from their statement.
+
+You receive a problem (statement, input/output format, constraints, samples) and a target language. Write a correct and efficient solution that meets the constraints within the time limit. You are deliberately not shown any existing solution: yours must be an independent implementation so that agreement between the two means something.
+
+Rules:
+- Output a complete program that reads all input from standard input and writes exactly the required output to standard output, nothing else (no prompts, no debug output).
+- Java: the public class must be named Main. C++: use fast input (std::ios::sync_with_stdio(false); cin.tie(nullptr)). Python: read with sys.stdin, avoid recursion deeper than a few thousand frames, prefer O(n log n) or better. JavaScript: read all of stdin with fs.readFileSync(0).
+- Handle the boundary cases the constraints allow (minimum sizes, empty structures where permitted, maximum values without overflow: use 64-bit integers where sums or products can exceed 2^31).
+- If a previous attempt and its failure are shown, fix the actual cause; do not just tweak output formatting unless that was the failure.
+- Match the output format of the samples exactly, including line breaks between answers for multiple test cases.
+"""
+
+GENERATOR_SYSTEM = """You write test-input generators for competitive-programming problems.
+
+Write a complete Python 3 program used as: python gen.py <category> <seed>. It must print exactly one complete test input for the problem, in the exact input format the problem describes, that satisfies every stated constraint (including any guarantee such as "at least one valid answer exists"). Use random.seed(int(seed)) first so the output is deterministic per seed, and make different seeds produce different inputs where the category allows.
+
+Categories and what they must produce:
+- boundary_min: the smallest sizes and values the constraints allow (n = 1, empty structures if allowed, minimum values).
+- boundary_max: the largest sizes AND values the constraints allow; this must reach the ceiling so it exercises the time limit.
+- edge: degenerate shapes: all elements equal, all wildcards or none, sorted / reverse-sorted, zeros or negatives if allowed, single distinct value.
+- structured: patterned inputs a wrong algorithm might mishandle: alternating patterns, repeated blocks, palindromes, values just below or at bounds.
+- random_small: uniformly random with small sizes (at most about 10).
+- random_large: uniformly random with sizes between half the maximum and the maximum.
+- adversarial: worst cases for the likely intended algorithm and for common wrong approaches (many equal keys, deep nesting, precision traps, hash-collision-like patterns).
+
+Rules:
+- For formats with several test cases in one input (a leading T), keep T within its constraint and apply the category to the cases inside; boundary_max should use the largest T allowed.
+- Only the standard library. Never print anything but the input. Never exceed the constraints. Keep the total input under 60 KB even at boundary_max by choosing the largest sizes that fit.
 """
 
 # --- user-turn builders ----------------------------------------------------------------------
@@ -159,3 +199,25 @@ def splice_user(q: Question, language: Language) -> str:
         f"## reference solution ({language.value})\n```\n{q.solutions[language].rstrip()}\n```\n\n"
         "Produce the completed program."
     )
+
+
+_LANGUAGE_NAMES = {Language.C: "C (C11)", Language.CPP: "C++17", Language.JAVA: "Java 17", Language.PYTHON: "Python 3", Language.JAVASCRIPT: "JavaScript (Node.js)"}
+
+
+def independent_solution_user(q: Question, language: Language, previous: tuple[str, str] | None = None) -> str:
+    text = (
+        question_block(q, include_code=False, include_tests=True, max_tests=3)
+        + f"\n\nWrite the solution in {_LANGUAGE_NAMES[language]}. Time limit: {q.time_limit_seconds or 2} s."
+    )
+    if previous:
+        code, failure = previous
+        text += f"\n\n## previous attempt\n```\n{code.rstrip()}\n```\n\n## why it failed\n{failure}\n\nWrite a corrected solution."
+    return text
+
+
+def generator_user(q: Question, previous: tuple[str, str] | None = None) -> str:
+    text = question_block(q, include_code=False, include_tests=True, max_tests=2) + "\n\nWrite the generator program for this problem."
+    if previous:
+        code, failure = previous
+        text += f"\n\n## previous attempt\n```\n{code.rstrip()}\n```\n\n## problem with it\n{failure}\n\nWrite a corrected generator."
+    return text

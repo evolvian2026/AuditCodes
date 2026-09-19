@@ -66,3 +66,6 @@ pre.diff { max-height: 24rem; font-size: .8rem; line-height: 1.35; }
 .diff-add { color: #166534; background: #dcfce7; display: block; } .diff-del { color: #991b1b; background: #fee2e2; display: block; }
 .diff-hunk { color: #6b21a8; display: block; } .diff-file { color: var(--muted); display: block; } .diff-ctx { display: block; }
 .notice.ok { background: #f0fdf4; border: 1px solid #bbf7d0; }
+.notice.projection { background: #eff6ff; border: 1px solid #bfdbfe; display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; }
+.notice.projection .bad { color: var(--bad); }
+table.generated td pre { max-height: 8rem; max-width: 28rem; font-size: .75rem; }

@@ -14,8 +14,8 @@ Supported solution languages: C, C++, Java, Python, JavaScript.
 | 1 | Executable core: canonical schema, sandboxed runner, language specs, generated drivers, test harness | **done** |
 | 2 | PDF ingest (layout-aware recovery, template parser), stdio harness, extraction review web app | **done** |
 | 3 | Rule catalog, execution-based audit, model-driven review, findings with patches, accept/reject UI | **done** |
-| 4 | Oracle establishment, hidden-test generation, repair loop | next |
-| 5 | Missing-language solution generation | |
+| 4 | Oracle establishment, hidden-test generation (10-50 by difficulty), repair projection | **done** |
+| 5 | Missing-language solution generation | next |
 | 6 | PDF / DOCX / JSON / ZIP export | |
 
 ## Setup
@@ -71,6 +71,27 @@ Every finding has a severity (blocker / major / minor / info), the component it 
 and — where a safe textual fix exists — a patch. Accept applies the patch to the question and
 re-validates the model; reject and waive record the decision. Reports live in
 `data/jobs/<job>/audit/<question id>.json`.
+
+### Hidden-test generation
+
+New hidden tests are only ever produced against an **oracle of two independent implementations**.
+The editorial is one; Claude writes the other from the statement alone (it never sees the
+editorial), in a language the question does not have yet. Only when both pass every existing test
+is the pair trusted (`GEN-001` offers the second solution as a patch); otherwise `GEN-003` says
+why and nothing is generated.
+
+Inputs come from a Claude-written generator program run in the sandbox per category
+(boundary-min, boundary-max, edge, structured, random-small, random-large, adversarial) and seed,
+filtered by the constraint validator and de-duplicated against existing tests. Expected outputs
+come from running both implementations; a case is kept only when they agree, disagreements are
+reported (`GEN-004`), and an editorial that times out at the constraint ceiling is reported
+(`SOL-006`). The target count is 15 / 25 / 40 for easy / medium / hard; generated cases get a
+level from their category and points from the question's own scheme, and arrive as one
+"append" patch that a reviewer can inspect case by case.
+
+The report also carries a **projection**: what remains after every execution-verified patch is
+accepted (re-running the execution audit on a working copy), with an "Accept all verified
+patches" action.
 
 Without an API key the execution-based checks still run in full; the model stages are skipped
 and the report says so.

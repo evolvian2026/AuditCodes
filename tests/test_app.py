@@ -183,3 +183,20 @@ def test_audit_all(client, audit_job):
     assert "Audit finished for 2" in r.text
     overview = client.get(f"/jobs/{audit_job}").text
     assert "3 major" in overview  # question 2: HIDE-001, HIDE-002, HIDE-003
+
+
+def test_accept_verified_applies_everything(client, audit_job):
+    require_language(Language.JAVA)
+    # fresh job so the earlier accept/reject clicks do not interfere
+    r = client.post("/jobs", files={"file": ("coding_ques_sample.pdf", FIXTURE.read_bytes(), "application/pdf")}, follow_redirects=False)
+    job = r.headers["location"].rsplit("/", 1)[1]
+    r = client.post(f"/jobs/{job}/q/105376/audit")
+    url = r.text.split('hx-get="')[1].split('"')[0]
+    r = _wait(client, url)
+    assert "If you accept all" in r.text and "Accept all verified patches" in r.text
+    r = client.post(f"/jobs/{job}/q/105376/findings/accept-verified")
+    assert r.status_code == 200 and r.headers.get("HX-Refresh") == "true"
+    q = next(x for x in json.loads(client.get(f"/jobs/{job}/export.json").content) if x["id"] == "105376")
+    assert len(q["hidden_tests"]) == 9 and "’" not in q["solutions"]["java"]
+    page = client.get(f"/jobs/{job}/q/105376").text
+    assert page.count("accepted · applied") == 2 and "If you accept all" not in page

@@ -8,7 +8,7 @@ import traceback
 from ..exec.runner import LocalRunner, Runner
 from ..llm.client import LLM
 from ..models import Question
-from . import dynamic, driver, static, validator
+from . import driver, dynamic, oracle, repair, static, testgen, validator
 from .report import AuditReport
 
 
@@ -35,11 +35,20 @@ def run_audit(q: Question, *, runner: Runner | None = None, llm: LLM | None = No
     stage("tests", lambda: dynamic.audit_tests(q, report))
     stage("solutions", solutions)
     if llm is None:
-        report.log("model stages skipped: no ANTHROPIC_API_KEY configured (validator, driver check, static audit)")
+        report.log("model stages skipped: no ANTHROPIC_API_KEY configured (validator, driver check, static audit, oracle, test generation)")
     else:
         stage("validator", lambda: validator.check_inputs(q, llm, runner, report))
         stage("driver", lambda: driver.check_drivers(q, llm, runner, report, verified))
         stage("static", lambda: static.static_audit(q, llm, runner, report))
+        holder: dict = {}
+
+        def establish() -> None:
+            holder["oracle"] = oracle.establish(q, llm, runner, report, verified)
+
+        stage("oracle", establish)
+        if holder.get("oracle") is not None:
+            stage("generation", lambda: testgen.generate(q, llm, runner, report, holder["oracle"]))
+    stage("projection", lambda: repair.project(q, report, runner))
     report.status = "failed" if report.error and not report.findings and not report.verifications else "done"
     report.finished_at = time.strftime("%Y-%m-%d %H:%M:%S")
     return report

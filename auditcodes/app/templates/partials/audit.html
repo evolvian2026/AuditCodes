@@ -23,6 +23,21 @@
         {% endfor %}
         {% if report.validator %}<span class="badge {{ 'ok' if report.validator.established else '' }}">validator {{ 'established' if report.validator.established else 'not established' }}</span>{% endif %}
       </div>
+      {% if report.oracle %}
+        <p class="muted">Oracle: {% if report.oracle.established %}{{ report.oracle.primary }} editorial + independent {{ report.oracle.secondary }} solution agree on every existing test{% else %}not established — {{ report.oracle.note }}{% endif %}.
+        {% if report.generation %} Generation: {{ report.generation.generated }} accepted of {{ report.generation.candidates or 0 }} candidate(s) (target {{ report.generation.target }}, {{ report.generation.existing_unique }} unique existing){% if report.generation.disagreements %}, {{ report.generation.disagreements }} disagreement(s){% endif %}{% if report.generation.too_slow %}, {{ report.generation.too_slow }} too slow{% endif %}.{% endif %}</p>
+      {% endif %}
+      {% if report.projection %}
+        <div class="notice projection">
+          <strong>If you accept all {{ report.auto_applicable | length }} verified patch(es):</strong>
+          {{ report.projection.remaining_execution.blocker }} blocker / {{ report.projection.remaining_execution.major }} major / {{ report.projection.remaining_execution.minor }} minor execution finding(s) remain
+          {% if report.projection.remaining_execution_rules %}({{ report.projection.remaining_execution_rules | join(', ') }}){% endif %};
+          {{ report.projection.remaining_review_items }} review item(s) without a patch;
+          {{ report.projection.hidden_tests }} hidden tests; solutions in {{ report.projection.solutions | join(', ') }}.
+          {% if report.projection.skipped %}<span class="bad">Skipped: {% for r, why in report.projection.skipped %}{{ r }} ({{ why }}) {% endfor %}</span>{% endif %}
+          <button hx-post="/jobs/{{ job.id }}/q/{{ q.id }}/findings/accept-verified" hx-target="#audit-panel" hx-swap="outerHTML" hx-confirm="Apply every execution-verified patch to this question?">Accept all verified patches</button>
+        </div>
+      {% endif %}
       {% if report.error %}<details class="notice warn"><summary>some stages failed</summary><pre class="log">{{ report.error }}</pre></details>{% endif %}
       <details class="stages"><summary class="muted">what ran</summary><ul>{% for s in report.stages %}<li>{{ s }}</li>{% endfor %}</ul></details>
       {% if not report.findings %}<p class="notice ok">No findings.</p>{% endif %}
@@ -43,12 +58,26 @@
             <div class="patch">
               <div class="patch-head">
                 {% if f.patch.op == 'remove' %}<strong>Proposed: remove {{ f.patch.path }}</strong>
+                {% elif f.patch.op == 'append' %}<strong>Proposed: add {{ f.patch.items | length }} test(s) to {{ f.patch.path }}</strong>
                 {% else %}<strong>Proposed change to <code>{{ f.patch.path }}</code></strong>{% endif %}
                 {% if f.patch.verified is true %}<span class="badge ok">verified by execution{% if f.patch.verification_note %}: {{ f.patch.verification_note }}{% endif %}</span>
                 {% elif f.patch.verified is false %}<span class="badge bad">execution check failed{% if f.patch.verification_note %}: {{ f.patch.verification_note }}{% endif %}</span>
                 {% else %}<span class="badge">not executable — review the diff</span>{% endif %}
               </div>
-              {% if f.patch.op == 'set' %}<pre class="diff">{{ f.patch.old_value | diff(f.patch.new_value, f.patch.path) | safe }}</pre>{% endif %}
+              {% if f.patch.op == 'set' %}<pre class="diff">{{ f.patch.old_value | diff(f.patch.new_value, f.patch.path) | safe }}</pre>
+              {% elif f.patch.op == 'append' %}
+                <table class="generated">
+                  <thead><tr><th>Label</th><th>Category</th><th>Level</th><th>Points</th><th>Input</th><th>Expected output</th></tr></thead>
+                  <tbody>
+                  {% for t in f.patch.items %}
+                    <tr><td>{{ t.label }}</td><td>{{ t.category | replace('_', ' ') }}</td><td>{% if t.difficulty %}<span class="badge diff-{{ t.difficulty }}">{{ t.difficulty }}</span>{% endif %}</td><td>{{ t.points }}</td>
+                        <td><pre>{{ t.stdin[:400] }}{% if t.stdin | length > 400 %}
+… ({{ t.stdin | length }} chars){% endif %}</pre></td><td><pre>{{ t.stdout[:300] }}{% if t.stdout | length > 300 %}
+…{% endif %}</pre></td></tr>
+                  {% endfor %}
+                  </tbody>
+                </table>
+              {% endif %}
             </div>
           {% endif %}
           {% if f.status.value == 'open' %}
