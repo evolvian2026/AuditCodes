@@ -243,7 +243,8 @@ def test_llm_failure_does_not_lose_execution_findings(questions, runner):
     llm = MockLLM(responses={"validator": boom, "splice": boom, "static_audit": boom})
     r = run_audit(questions[1], runner=runner, llm=llm)
     assert r.status == "done"
-    assert {f.rule_id for f in r.findings} == {"HIDE-001", "HIDE-002", "HIDE-003", "GEN-005"}
+    assert {f.rule_id for f in r.findings} == {"HIDE-001", "HIDE-002", "HIDE-003", "GEN-005", "LANG-002"}
+    assert all("model error" in f.message.lower() or "could not obtain" in f.message.lower() for f in _by_rule(r, "LANG-002"))
     assert "static audit failed" in (r.error or "")
     assert not r.validator["established"] and not r.oracle["established"]
     assert "could be obtained" in _by_rule(r, "GEN-005")[0].message
@@ -316,6 +317,8 @@ def _phase4_mock(q, solution=PY_SOLUTION_Q1, generator=GENERATOR_Q1):
 
     llm.responses["independent_solution"] = independent
     llm.responses["generator"] = GeneratorProgram(python_code=generator, notes="masks a valid word")
+    llm.responses["port_solution"] = lambda system, user: SolutionProgram(code=PORTS_Q1[_lang_name(user, "Port it to")], approach="same greedy")
+    llm.responses["driver_scaffold"] = lambda system, user: _scaffold(_lang_name(user, "Produce the"))
     return llm
 
 
@@ -334,7 +337,7 @@ def test_oracle_and_generation_q1(questions, runner):
     assert r.status == "done", r.error
     tasks = [c.task for c in llm.calls]
     # C++ is preferred first, fails twice (garbage code), then Python succeeds on the first attempt
-    assert tasks.count("independent_solution") == 3 and tasks[-1] == "generator"
+    assert tasks.count("independent_solution") == 3 and tasks.index("generator") > tasks.index("independent_solution")
     assert r.oracle["established"] and r.oracle["primary"] == "java" and r.oracle["secondary"] == "python"
     (gen1,) = _by_rule(r, "GEN-001")
     assert gen1.patch.path == "solutions.python" and gen1.patch.verified and gen1.patch.new_value == PY_SOLUTION_Q1
@@ -358,8 +361,8 @@ def test_oracle_and_generation_q1(questions, runner):
         assert 1 <= len(s) <= 50 and set(s) <= set("ab?") and "aa" not in i.stdout
     # the projection applies SOL-002, the duplicate removal, GEN-001 and the generated tests
     assert r.projection["remaining_execution"]["blocker"] == 0 and r.projection["remaining_execution"]["major"] == 0
-    assert r.projection["hidden_tests"] == 15 and r.projection["solutions"] == ["java", "python"]
-    assert set(r.projection["applied"]) == {"SOL-002", "HIDE-001", "GEN-001", "GEN-002"}
+    assert r.projection["hidden_tests"] == 15 and {"java", "python"} <= set(r.projection["solutions"])
+    assert {"SOL-002", "HIDE-001", "GEN-001", "GEN-002"} <= set(r.projection["applied"])
     assert r.projection["verifications"]["java"]["all_passed"] and r.projection["verifications"]["java"]["total"] == 18
     assert r.projection["verifications"]["python"]["all_passed"]
 
@@ -439,3 +442,148 @@ def test_apply_append_and_apply_all(questions):
     patched, applied, skipped = apply_all(q, fs)
     assert patched.title == "New" and len(patched.hidden_tests) == 10  # -1 duplicate +1 generated
     assert [f.rule_id for f in applied] == ["X", "HIDE-001", "GEN-002"] and skipped[0][0].rule_id == "Y"
+
+
+# --- phase 5: language completion -------------------------------------------------------------
+
+from auditcodes.audit.complete import scaffold_problems  # noqa: E402
+from auditcodes.llm.prompts import DriverScaffold  # noqa: E402
+
+PORTS_Q1 = {
+    "C++17": """#include <bits/stdc++.h>
+using namespace std;
+int main() {
+    string s; cin >> s; int n = s.size();
+    for (int i = 0; i < n; i++) if (s[i] == '?') {
+        bool pa = i > 0 && s[i - 1] == 'a', na = i + 1 < n && s[i + 1] == 'a';
+        s[i] = (pa || na) ? 'b' : 'a';
+    }
+    cout << s << "\\n";
+}
+""",
+    "C (C11)": """#include <stdio.h>
+#include <string.h>
+int main(void) {
+    char s[64]; if (scanf("%63s", s) != 1) return 0; int n = strlen(s);
+    for (int i = 0; i < n; i++) if (s[i] == '?') {
+        int pa = i > 0 && s[i - 1] == 'a', na = i + 1 < n && s[i + 1] == 'a';
+        s[i] = (pa || na) ? 'b' : 'a';
+    }
+    printf("%s\\n", s); return 0;
+}
+""",
+    "JavaScript (Node.js)": """const s = require('fs').readFileSync(0, 'utf8').trim().split('');
+for (let i = 0; i < s.length; i++) if (s[i] === '?') {
+    const pa = i > 0 && s[i - 1] === 'a', na = i + 1 < s.length && s[i + 1] === 'a';
+    s[i] = (pa || na) ? 'b' : 'a';
+}
+console.log(s.join(''));
+""",
+    "Python 3": PY_SOLUTION_Q1,
+}
+
+_BODY = {
+    "C++17": ("string ancientTranslation(string s) {", "    int n = s.size();\n    for (int i = 0; i < n; i++) if (s[i] == '?') { bool pa = i > 0 && s[i - 1] == 'a', na = i + 1 < n && s[i + 1] == 'a'; s[i] = (pa || na) ? 'b' : 'a'; }\n    return s;", "}",
+              "#include <bits/stdc++.h>\nusing namespace std;\n", "// Do not edit this part of code\nint main() { string w; cin >> w; cout << ancientTranslation(w) << \"\\n\"; return 0; }\n", "    // Write your code here"),
+    "C (C11)": ("char* ancientTranslation(char* s) {", "    int n = strlen(s);\n    for (int i = 0; i < n; i++) if (s[i] == '?') { int pa = i > 0 && s[i - 1] == 'a', na = i + 1 < n && s[i + 1] == 'a'; s[i] = (pa || na) ? 'b' : 'a'; }\n    return s;", "}",
+               "#include <stdio.h>\n#include <string.h>\n", "// Do not edit this part of code\nint main(void) { char w[64]; if (scanf(\"%63s\", w) != 1) return 0; printf(\"%s\\n\", ancientTranslation(w)); return 0; }\n", "    // Write your code here"),
+    "JavaScript (Node.js)": ("function ancientTranslation(word) {", "    const s = word.split('');\n    for (let i = 0; i < s.length; i++) if (s[i] === '?') { const pa = i > 0 && s[i - 1] === 'a', na = i + 1 < s.length && s[i + 1] === 'a'; s[i] = (pa || na) ? 'b' : 'a'; }\n    return s.join('');", "}",
+                             "", "// Do not edit this part of code\nconst w = require('fs').readFileSync(0, 'utf8').trim();\nconsole.log(ancientTranslation(w));\n", "    // Write your code here"),
+    "Python 3": ("def ancientTranslation(word):", "    s = list(word)\n    for i in range(len(s)):\n        if s[i] == '?':\n            pa = i > 0 and s[i - 1] == 'a'\n            na = i + 1 < len(s) and s[i + 1] == 'a'\n            s[i] = 'b' if (pa or na) else 'a'\n    return ''.join(s)", "",
+                 "import sys\n", "# Do not edit this part of code\nprint(ancientTranslation(sys.stdin.read().split()[0]))\n", "    # Write your code here\n    pass"),
+}
+
+
+def _scaffold(name: str, broken: bool = False) -> DriverScaffold:
+    head, body, tail, prelude, main, stub = _BODY[name]
+    driver = f"{prelude}{head}\n{stub}\n{tail}\n{main}" if tail else f"{prelude}{head}\n{stub}\n\n{main}"
+    filled = f"{prelude}{head}\n{body}\n{tail}\n{main}" if tail else f"{prelude}{head}\n{body}\n\n{main}"
+    if broken:
+        driver = driver.replace("Do not edit this part of code", "main section")
+    return DriverScaffold(driver=driver, filled=filled, notes="")
+
+
+def _lang_name(user: str, verb: str) -> str:
+    return next(n for n in PORTS_Q1 if f"{verb} {n}" in user)
+
+
+def _phase5_mock(q, ports=None, scaffolds=None):
+    llm = _phase4_mock(q)
+    ports = ports or PORTS_Q1
+
+    def port(system, user):
+        assert "StringBuilder" in user  # the port sees the verified reference
+        return SolutionProgram(code=ports[_lang_name(user, "Port it to")], approach="same greedy")
+
+    def scaffold(system, user):
+        assert "ancientTranslation" in user  # the house-style example is shown
+        return (scaffolds or {}).get(_lang_name(user, "Produce the"), _scaffold(_lang_name(user, "Produce the")))
+
+    llm.responses["port_solution"] = port
+    llm.responses["driver_scaffold"] = scaffold
+    return llm
+
+
+def test_scaffold_checks():
+    ok = _scaffold("C++17")
+    assert scaffold_problems(ok.driver, ok.filled) == []
+    py = _scaffold("Python 3")
+    assert scaffold_problems(py.driver, py.filled) == []  # 'pass' after the marker is part of the stub
+    assert scaffold_problems("int f() {\n    // Write your code here\n    return 0;\n}\n// Do not edit this part of code\nint main() { return f(); }", "int f() {\n    return 42;\n}\n// Do not edit this part of code\nint main() { return f(); }") == []
+    bad = _scaffold("C++17", broken=True)
+    assert any("Do not edit" in p for p in scaffold_problems(bad.driver, bad.filled))
+    assert any("not found in the filled" in p for p in scaffold_problems(ok.driver, ok.filled.replace("int main()", "int main(int argc, char** argv)")))
+
+
+def test_language_completion_q1(questions, runner, monkeypatch):
+    require_language(Language.JAVA)
+    for lang in (Language.C, Language.CPP, Language.JAVASCRIPT):
+        require_language(lang)
+    q = questions[0]
+    llm = _phase5_mock(q)
+    r = run_audit(q, runner=runner, llm=llm)
+    assert r.status == "done", r.error
+    tasks = [c.task for c in llm.calls]
+    assert tasks.count("port_solution") == 3 and tasks.count("driver_scaffold") == 4  # python's driver too
+    added = {f.component: f for f in _by_rule(r, "LANG-001")}
+    assert set(added) == {"solutions.cpp", "solutions.c", "solutions.javascript"}
+    assert all(f.patch.verified and "19/19" in f.patch.verification_note for f in added.values())  # 13 existing + 6 generated
+    drivers = {f.component: f for f in _by_rule(r, "DRV-005")}
+    assert set(drivers) == {"drivers.cpp", "drivers.c", "drivers.javascript", "drivers.python"}
+    assert all("Write your code here" in f.patch.new_value and f.patch.verified for f in drivers.values())
+    assert not _by_rule(r, "LANG-002") and not _by_rule(r, "LANG-003") and not _by_rule(r, "DRV-006")
+    assert r.languages["cpp"]["solution"].startswith("added") and r.languages["python"]["driver"] == "added"
+    assert r.projection["solutions"] == ["c", "cpp", "java", "javascript", "python"]
+    assert all(v["all_passed"] and v["total"] == 18 for v in r.projection["verifications"].values())
+
+
+def test_language_completion_failures(questions, runner, monkeypatch):
+    require_language(Language.JAVA)
+    require_language(Language.C)
+    require_language(Language.JAVASCRIPT)
+    monkeypatch.setenv("AUDITCODES_GENERATE_DRIVERS", "0")
+    q = questions[0]
+    ports = dict(PORTS_Q1)
+    ports["C (C11)"] = "int main(void) { return 1 +; }"
+    ports["JavaScript (Node.js)"] = "let x = 0; while (true) { x++; }\n"
+    llm = _phase5_mock(q, ports=ports)
+    r = run_audit(q, runner=runner, llm=llm)
+    (c,) = _by_rule(r, "LANG-002")
+    assert c.component == "solutions.c" and "2 attempts" in c.message and "compile" in c.evidence
+    (js,) = _by_rule(r, "LANG-003")
+    assert js.component == "solutions.javascript" and "time limit" in js.message and js.severity is Severity.MAJOR
+    assert [f.component for f in _by_rule(r, "LANG-001")] == ["solutions.cpp"]
+    assert not _by_rule(r, "DRV-005") and "driver" not in r.languages["cpp"]
+    assert [c.task for c in llm.calls].count("port_solution") == 5  # cpp 1, c 2, js 2
+
+
+def test_broken_scaffold_not_offered(questions, runner):
+    require_language(Language.JAVA)
+    require_language(Language.CPP)
+    q = questions[0]
+    ports = {k: v for k, v in PORTS_Q1.items()}
+    llm = _phase5_mock(q, ports=ports, scaffolds={"C++17": _scaffold("C++17", broken=True)})
+    r = run_audit(q, runner=runner, llm=llm)
+    bad = [f for f in _by_rule(r, "DRV-006") if f.component == "drivers.cpp"]
+    assert bad and "Do not edit" in bad[0].message
+    assert "drivers.cpp" not in {f.component for f in _by_rule(r, "DRV-005")}

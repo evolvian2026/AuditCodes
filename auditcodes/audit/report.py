@@ -92,6 +92,7 @@ class AuditReport(BaseModel):
     driver_check: dict[str, Any] | None = None
     oracle: dict[str, Any] | None = None  # the pair of implementations trusted to produce expected outputs
     generation: dict[str, Any] | None = None  # hidden-test generation statistics
+    languages: dict[str, Any] | None = None  # per-language solution/driver completion outcome
     projection: dict[str, Any] | None = None  # what remains after accepting every verified patch
     stages: list[str] = Field(default_factory=list)  # human-readable log of what ran
 

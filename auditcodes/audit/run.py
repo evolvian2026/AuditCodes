@@ -8,8 +8,18 @@ import traceback
 from ..exec.runner import LocalRunner, Runner
 from ..llm.client import LLM
 from ..models import Question
-from . import driver, dynamic, oracle, repair, static, testgen, validator
+from . import complete, driver, dynamic, oracle, repair, static, testgen, validator
 from .report import AuditReport
+
+
+def generated_cases(report: AuditReport) -> list:
+    """Test cases produced by the generation stage (still a patch until accepted)."""
+    from ..models import TestCase
+
+    for f in report.findings:
+        if f.patch and f.patch.op == "append" and f.patch.items:
+            return [TestCase.model_validate(i) for i in f.patch.items]
+    return []
 
 
 def run_audit(q: Question, *, runner: Runner | None = None, llm: LLM | None = None, progress=None) -> AuditReport:
@@ -48,6 +58,7 @@ def run_audit(q: Question, *, runner: Runner | None = None, llm: LLM | None = No
         stage("oracle", establish)
         if holder.get("oracle") is not None:
             stage("generation", lambda: testgen.generate(q, llm, runner, report, holder["oracle"]))
+            stage("languages", lambda: complete.complete_languages(q, llm, runner, report, holder["oracle"], generated_cases(report)))
     stage("projection", lambda: repair.project(q, report, runner))
     report.status = "failed" if report.error and not report.findings and not report.verifications else "done"
     report.finished_at = time.strftime("%Y-%m-%d %H:%M:%S")

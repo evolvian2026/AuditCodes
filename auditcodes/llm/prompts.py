@@ -57,6 +57,12 @@ class SolutionProgram(BaseModel):
     approach: str = Field(description="One paragraph: the algorithm and its complexity")
 
 
+class DriverScaffold(BaseModel):
+    driver: str = Field(description="The scaffold a candidate sees: the fixed input/output section plus a stub to implement, marked with a 'Write your code here' comment and a 'Do not edit this part of code' comment")
+    filled: str = Field(description="Exactly the scaffold with the stub implemented using the given solution; every line outside the stub identical to 'driver'")
+    notes: str
+
+
 class GeneratorProgram(BaseModel):
     python_code: str = Field(description="Complete Python 3 program; usage: python gen.py <category> <seed>; prints one complete test input")
     notes: str
@@ -136,6 +142,27 @@ Categories and what they must produce:
 Rules:
 - For formats with several test cases in one input (a leading T), keep T within its constraint and apply the category to the cases inside; boundary_max should use the largest T allowed.
 - Only the standard library. Never print anything but the input. Never exceed the constraints. Keep the total input under 60 KB even at boundary_max by choosing the largest sizes that fit.
+"""
+
+PORT_SOLUTION_SYSTEM = """You port reference solutions of competitive-programming problems to other languages.
+
+You receive the problem, a reference solution that is verified to pass every test, and a target language. Write the same algorithm in the target language, as a complete program reading standard input and writing standard output exactly as the reference does.
+
+Rules:
+- Preserve the algorithm and its complexity; do not "improve" it. Preserve variable names and structure where the target language allows, so the solutions read as one family.
+- Respect the target language's conventions: Java public class Main with fast I/O for large input; C++17 with std::ios::sync_with_stdio(false); C11 with scanf/printf or manual parsing, 64-bit integers where the reference uses long/long long; Python 3 reading with sys.stdin (no recursion beyond a few thousand frames, use iterative forms if the reference recurses deeply); JavaScript for Node.js reading all of stdin with fs.readFileSync(0) and using BigInt only when values exceed 2^53.
+- Meet the time limit in the target language: the judge allows interpreted languages extra time, but an algorithm that is quadratic where the reference is linear does not qualify.
+- No commentary, no debug output. If a previous attempt and its failure are shown, fix the actual cause.
+"""
+
+DRIVER_SYSTEM = """You write driver-code scaffolds for coding-assessment questions.
+
+A scaffold is what a candidate sees: a complete program whose fixed section reads the input and prints the output, and a stub function/method the candidate must implement, containing only a comment such as '// Write your code here' (or '# Write your code here' in Python). The fixed section is marked 'Do not edit this part of code'.
+
+You receive the problem, a verified complete solution in the target language, and an example scaffold from another language showing the house style (function name, comments, structure). Produce:
+- 'driver': the scaffold in the target language, in the same house style: same function name and parameters as the example scaffold where the language allows, the stub body replaced by the comment, the fixed input/output section reading exactly the described input and printing exactly the described output.
+- 'filled': the very same scaffold with the stub implemented from the verified solution. Every line outside the stub must be byte-for-byte identical to 'driver'.
+The stub must be a function/method that the fixed section calls; the fixed section must not depend on anything the candidate writes other than that function.
 """
 
 # --- user-turn builders ----------------------------------------------------------------------
@@ -220,4 +247,27 @@ def generator_user(q: Question, previous: tuple[str, str] | None = None) -> str:
     if previous:
         code, failure = previous
         text += f"\n\n## previous attempt\n```\n{code.rstrip()}\n```\n\n## problem with it\n{failure}\n\nWrite a corrected generator."
+    return text
+
+
+def port_solution_user(q: Question, language: Language, reference_language: Language, reference_code: str, previous: tuple[str, str] | None = None) -> str:
+    text = (
+        question_block(q, include_code=False, include_tests=True, max_tests=2)
+        + f"\n\n## verified reference solution ({_LANGUAGE_NAMES[reference_language]})\n```\n{reference_code.rstrip()}\n```"
+        + f"\n\nPort it to {_LANGUAGE_NAMES[language]}. Time limit: {q.time_limit_seconds or 2} s (the judge scales it for interpreted languages)."
+    )
+    if previous:
+        code, failure = previous
+        text += f"\n\n## previous attempt\n```\n{code.rstrip()}\n```\n\n## why it failed\n{failure}\n\nWrite a corrected port."
+    return text
+
+
+def driver_user(q: Question, language: Language, solution_code: str, example_language: Language | None, example_driver: str | None) -> str:
+    text = (
+        f"# Question {q.id}: {q.title}\n\n## input_format_md\n{q.input_format_md or ''}\n\n## output_format_md\n{q.output_format_md or ''}\n\n"
+        f"## verified solution ({_LANGUAGE_NAMES[language]})\n```\n{solution_code.rstrip()}\n```\n"
+    )
+    if example_driver and example_language:
+        text += f"\n## example scaffold ({_LANGUAGE_NAMES[example_language]}) — match its house style\n```\n{example_driver.rstrip()}\n```\n"
+    text += f"\nProduce the {_LANGUAGE_NAMES[language]} scaffold and its filled version."
     return text

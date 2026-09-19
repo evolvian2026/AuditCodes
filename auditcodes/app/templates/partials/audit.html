@@ -27,6 +27,9 @@
         <p class="muted">Oracle: {% if report.oracle.established %}{{ report.oracle.primary }} editorial + independent {{ report.oracle.secondary }} solution agree on every existing test{% else %}not established — {{ report.oracle.note }}{% endif %}.
         {% if report.generation %} Generation: {{ report.generation.generated }} accepted of {{ report.generation.candidates or 0 }} candidate(s) (target {{ report.generation.target }}, {{ report.generation.existing_unique }} unique existing){% if report.generation.disagreements %}, {{ report.generation.disagreements }} disagreement(s){% endif %}{% if report.generation.too_slow %}, {{ report.generation.too_slow }} too slow{% endif %}.{% endif %}</p>
       {% endif %}
+      {% if report.languages %}
+        <p class="muted">Languages: {% for lang, o in report.languages.items() %}{{ lang }} — {{ o.solution }}{% if o.driver %}, driver {{ o.driver }}{% endif %}{{ '; ' if not loop.last }}{% endfor %}.</p>
+      {% endif %}
       {% if report.projection %}
         <div class="notice projection">
           <strong>If you accept all {{ report.auto_applicable | length }} verified patch(es):</strong>

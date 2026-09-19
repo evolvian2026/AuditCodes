@@ -15,7 +15,7 @@ Supported solution languages: C, C++, Java, Python, JavaScript.
 | 2 | PDF ingest (layout-aware recovery, template parser), stdio harness, extraction review web app | **done** |
 | 3 | Rule catalog, execution-based audit, model-driven review, findings with patches, accept/reject UI | **done** |
 | 4 | Oracle establishment, hidden-test generation (10-50 by difficulty), repair projection | **done** |
-| 5 | Missing-language solution generation | next |
+| 5 | Solutions and driver scaffolds in all five languages, each verified | **done** |
 | 6 | PDF / DOCX / JSON / ZIP export | |
 
 ## Setup
@@ -88,6 +88,19 @@ reported (`GEN-004`), and an editorial that times out at the constraint ceiling 
 (`SOL-006`). The target count is 15 / 25 / 40 for easy / medium / hard; generated cases get a
 level from their category and points from the question's own scheme, and arrive as one
 "append" patch that a reviewer can inspect case by case.
+
+### Language completion
+
+For every supported language the question lacks, Claude ports the verified editorial (same
+algorithm, that language's conventions); the sandbox runs it against every test, existing and
+generated, with the judge's per-language time allowance. It is offered (`LANG-001`, a verified
+patch) only when it passes everything. A port that is correct but too slow is `LANG-003` — a
+fairness signal about the time limit in that language — and one that cannot be made to pass is
+`LANG-002`. A driver scaffold is then written per language in the house style of the existing
+driver (`DRV-005`): the scaffold and its filled version come from one call, the filled program
+must pass every test, and every fixed line of the scaffold must appear verbatim in it, so the
+stub really is the only thing a candidate writes. Set `AUDITCODES_GENERATE_DRIVERS=0` to skip
+scaffolds. Toolchains missing on the host are reported (`LANG-004`), never silently skipped.
 
 The report also carries a **projection**: what remains after every execution-verified patch is
 accepted (re-running the execution audit on a working copy), with an "Accept all verified
