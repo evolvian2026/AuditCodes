@@ -31,7 +31,14 @@ dev = [
 include = ["auditcodes*"]
 
 [tool.setuptools.package-data]
-auditcodes = ["app/templates/*.html", "app/templates/partials/*.html", "app/static/*"]
+# Every non-.py file under auditcodes/ must be matched here or it is missing from the wheel and
+# the feature that reads it fails only once installed; tests/test_packaging.py enforces that.
+auditcodes = [
+    "app/templates/*.html",
+    "app/templates/partials/*.html",
+    "app/static/*",
+    "export/templates/*.html",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -29,6 +29,19 @@ python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 The test suite compiles and runs reference solutions in all five languages; a language whose
 toolchain is missing is skipped, not failed.
 
+### End-to-end check
+
+`scripts/e2e.py` boots the real server as a subprocess and drives it over HTTP — upload, extract,
+edit, audit, accept patches, re-verify, export, re-audit the exported bank, CLI commands, job
+deletion — then validates the produced PDF, DOCX and ZIP. Point `--python` at an interpreter where
+the package is *installed* rather than the source tree, and it also covers packaging (a data file
+missing from the wheel fails here and nowhere else):
+
+```bash
+python3 -m venv /tmp/probe && /tmp/probe/bin/pip install .
+.venv/bin/python scripts/e2e.py --python /tmp/probe/bin/python
+```
+
 ## Using it
 
 ```bash

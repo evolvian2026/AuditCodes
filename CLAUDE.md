@@ -30,3 +30,5 @@
 - Exports (`auditcodes/export/`) render from one HTML template; PDF backends must both work from
   it (WeasyPrint full CSS; PyMuPDF Story a subset — keep `_story_css` simple). DOCX is built from
   the model, not from HTML.
+- Any new non-.py runtime file must be added to `[tool.setuptools.package-data]`; `tests/test_packaging.py`
+  fails otherwise. `scripts/e2e.py` is the end-to-end check against an installed package.
